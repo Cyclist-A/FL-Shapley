@@ -260,5 +260,6 @@ class Server:
                 u_y, u_y0 = self._evaluate(self._aggregate(y)), self._evaluate(self._aggregate(y0))
                 delta = u_y - u_y0
                 result[p[i]] += delta
-        shapley = result / samples
-        return shapley
+        for (key, value) in result:
+            result[key] = value/samples
+        return result
