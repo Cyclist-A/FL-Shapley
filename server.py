@@ -22,15 +22,17 @@ class Server:
     def __init__(self, net, channels, testset, trainset=None, sampler=None, device='cuda:0'):
         self.device = torch.device(device)
         self.net = net.to(device)
-        self.channels = channels
         self.testset = testset
         self.trainset = trainset
-        self.sampler = sampler        
+        self.sampler = sampler
+
+        # set idx for channels, use as identity
+        self.channels = {i: c for i, c in enumerate(channels)}
 
     def __del__(self):
         # stop all clients by send a signal -1
-        for c in self.channels:
-            c.put(-1)
+        for idx in self.channels:
+            self.channels[idx].put(-1)
 
         print('Kill all client, stop training')
 
@@ -139,10 +141,16 @@ class Server:
             return self.channels
         elif c > 1 or c <= 0:
             raise ValueError(f'The proportion of chosen clients should lie in (0, 1]. Now is {c}')
-
-        num = max(c * len(self.channels), 1)
         
-        chosen_clients = np.random.shuffle(self.channels)[:num]
+        # randomly choose clients idx
+        num = max(c * len(self.channels), 1)
+        idx = [i for i in range(len(self.channels))]
+        np.random.shuffle(idx)
+        idx = idx[:num]
+        
+        # choose clients by idx
+        chosen_clients = {i: self.channels[i] for i in idx}
+
         return chosen_clients
 
     def _params_from_client(self, clients):
@@ -150,19 +158,19 @@ class Server:
         Fetch local training resutls from clients
 
         ARGS:
-            clients: the list of chosen clients
+            clients: the dict of chosen clients
         RETURN:
-            d_params(list): delta parameters from all chosen clients
+            d_params(dict): delta parameters from all chosen clients
         """
         # send params to client by queue
         print('Send parameters to chosen clients...')
-        for c in clients:
-            c.put(self.net.state_dict())
+        for key in clients:
+            clients[key].put(self.net.state_dict())
 
         # fetch params from client 
-        d_params = []
-        for c in clients:
-            d_params.append(c.get())
+        d_params = {}
+        for key in clients:
+            d_params[key] = clients[key].get()
 
         return d_params
 
@@ -177,15 +185,17 @@ class Server:
             None
         """
         # aggregate
-        keys = d_params[0].keys()
+        idx = d_params.keys()
+
+        layers = d_params[idx[0]].keys()
         aggr_params = {}
 
-        for k in keys:
-            aggr_params[k] = d_params[0][k]
-            for i in range(len(d_params), 1):
-                aggr_params[k] += d_params[i][k]
+        for l in layers:
+            aggr_params[l] = d_params[idx[0]][l]
+            for i in idx[1:]:
+                aggr_params[l] += d_params[i][l]
 
-            aggr_params[k] /= len(d_params)
+            aggr_params[l] /= len(d_params)
 
         # update net's params
         params = self.net.load_state_dict(aggr_params)
