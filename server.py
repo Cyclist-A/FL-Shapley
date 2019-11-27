@@ -263,10 +263,9 @@ class Server:
             d_params:
             samples: sampling times
         RETURN:
-            shapley(dict): Client weights' shapely valye
+            result(dict): Client weights' shapely valye
         """
         w_ids = d_params.keys()
-        N = len(w_ids)
         result = defaultdict(float)
         for r in range(samples):
             p = np.random.permutation(w_ids)
