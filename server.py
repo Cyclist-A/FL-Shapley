@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.utils.data as utils
 
 import numpy as np
+from collections import defaultdict
 from sklearn.metrics import accuracy_score
 
 class Server:
@@ -199,24 +200,63 @@ class Server:
 
         # update net's params
         params = self.net.load_state_dict(aggr_params)
-        
 
-    def _evaluate(self):
+    def _evaluate(self, model):
         """
         Evaluate current net in the server
         """
-        
+
+        if not model:
+            return 0.0
+
         loader = utils.DataLoader(self.testset, batch_size=1000, shuffle=False)
         predicted = []
         truth = []
 
         for data in loader:
             inputs, labels = data[0].to(self.device), data[1].to(self.device)
-            outputs = self.net(inputs)
+            outputs = model(inputs)
+            # outputs = self.net(inputs)
             _, pred = torch.max(outputs.data, 1)
-            
+
             for p, q in zip(pred, labels):
                 predicted.append(p.item())
                 truth.append(q.item())
-        
+
         return accuracy_score(truth, predicted)
+
+    def _aggregate(self, models):
+        """
+        :param
+            models:  a list contains workers' weights
+        :return: a aggregated weights
+        """
+        if not models:
+            return models
+
+        keys = models[0].keys()
+        aggr_params = {}
+
+        for k in keys:
+            aggr_params[k] = models[0][k]
+            for i in range(len(models), 1):
+                aggr_params[k] += models[i][k]
+
+            aggr_params[k] /= len(models)
+
+        return aggr_params
+
+    def _shapley_value_sampling(self, d_params, samples = 1000):
+        w_ids = d_params.keys()
+        N = len(w_ids)
+        result = defaultdict(float)
+        for r in range(samples):
+            p = np.random.permutation(w_ids)
+            for i in range(p):
+                y = [d_params[_id] for _id in p[:i+1]]
+                y0 = [d_params[_id] for _id in p[:i]]
+                u_y, u_y0 = self._evaluate(self._aggregate(y)), self._evaluate(self._aggregate(y0))
+                delta = u_y - u_y0
+                result[p[i]] += delta
+        shapley = result / samples
+        return shapley
