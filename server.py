@@ -213,10 +213,12 @@ class Server:
         predicted = []
         truth = []
 
+        self.net.load_state_dict(model)
+
         for data in loader:
             inputs, labels = data[0].to(self.device), data[1].to(self.device)
-            outputs = model(inputs)
-            # outputs = self.net(inputs)
+            # outputs = model(inputs)
+            outputs = self.net(inputs)
             _, pred = torch.max(outputs.data, 1)
 
             for p, q in zip(pred, labels):
