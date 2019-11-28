@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -14,40 +15,44 @@ class Client:
             channel: a Queue connected to server
             dataset: clients dataset
             device: training device
-            sampler: sampler for dataset loader
-            settings: custom settings for local training
     """
-    def __init__(self, net, channel, dataset, device='cpu', sampler=None, settings=None):
+    def __init__(self, net, channel, dataset, device='cpu'):
         self.net = net
         self.channel = channel
         self.dataset = dataset
         self.device = torch.device(device)
-        self.sampler = sampler
 
         # settings
         self.settings = {
             'epoch': 5, 
             'lr': 0.01,
-            'batch_size': 16,
+            'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
             'optimizer': optim.Adam,
         }
 
+    def run(self, settings=None):
+        """
+        Run the client for local training TODO
+
+        ARGS:
+            settings: custom settings for local training
+        RETURN:
+            None
+        """
+        raise NotImplementedError('Still working on solving mp problems')
+
+        # customize settings
         if settings:
             for k in settings:
                 self.settings[k] = settings[k]
 
-    def run(self):
-        """
-        Run the client for local training
-
-        ARGS:
-            None
-        RETURN:
-            None
-        """
-        # wait commands from server:
         while True:
+            # wait commands from server    
+            if self.channel.empty():
+                time.sleep(10)
+                continue
+
             params = self.channel.get()
 
             # finished training
@@ -66,6 +71,32 @@ class Client:
             # update to server
             self.channel.put(d_weights)
 
+    def run_round(self, params, settings=None):
+        """
+        Run clients for a round, use for for-loop function
+
+        ARGS:
+            params: the state_dict from server
+            settings: settings for local training process
+        RETURN:
+            d_weight(dict): 
+        """
+        # customize settings
+        if settings:
+            for k in settings:
+                self.settings[k] = settings[k]
+
+        # load params
+        self.net.load_state_dict(params)
+        
+        # train local model
+        self._train()
+
+        # calcualte delta weights (no need)
+        # d_weights = self._cal_d_weights(params)
+
+        return self.net.state_dict()
+
     def _train(self):
         """
         Train the model several epochs locally
@@ -77,11 +108,10 @@ class Client:
         """
         
         # initialize before training
-        loader = utils.DataLoader(self.dataset, batch_size=self.settings['batch_size'] ,sampler=self.sampler, shuffle=True)
-        criterion = self.settings['loss']()
+        self.net.to(self.device)
+        loader = utils.DataLoader(self.dataset, batch_size=self.settings['batch_size'] , shuffle=True)
+        criterion = self.settings['loss_func']()
         optimizer = self.settings['optimizer'](self.net.parameters(), lr=self.settings['lr'])
-
-        print('Start heating server...')
 
         for epoch in range(self.settings['epoch']):
             self.net.train()
@@ -101,7 +131,7 @@ class Client:
             
             # evaluate
             train_accu = self._evaluate()
-            print(f'Epoch[{epoch}/{self.settings["epoch"]}] Train accu:{train_accu}')
+            print(f'Epoch[{epoch + 1}/{self.settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
 
     def _cal_d_weights(self, params):
         """
@@ -129,7 +159,7 @@ class Client:
         RETURN:
             accuracy_score(float): the 
         """
-        
+        self.net.eval()
         loader = utils.DataLoader(self.dataset, batch_size=1000, shuffle=False)
         predicted = []
         truth = []

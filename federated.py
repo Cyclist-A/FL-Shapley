@@ -2,7 +2,7 @@ from server import Server
 from client import Client
 
 import numpy as np
-import multiprocessing as mp
+import torch.multiprocessing as mp
 
 import torch
 import torch.utils.data as utils
@@ -16,36 +16,96 @@ class Federated:
         C: # clients to create
         trainset: the whole training set, split in i.i.d
         testset: testset to evaluate server's preformance
+        devices: a list of available devices
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, C, trainest, testset, random_state=100):
+    def __init__(self, net, C, trainest, testset, devices, random_state=100):
         # construct channel to connect server and client
         self.C = C
         channel = [mp.Queue() for i in range(C)]
 
         # split dataset for different clients
-        samplers, warmer = self._split_dataset(trainest, random_state)
+        subsets, warm_set = self._split_dataset(trainest, random_state)
 
         # create a server and clients
-        self.server = Server(net, channel, testset, trainest, warmer)
-        self.clients = [Client(net, channel[i], trainest[i]) for i in range(C)]
+        self.server = Server(net(), channel, testset, warm_set, device=devices[0])
+        self.clients = [Client(net(), channel[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
 
-    def run(self, batch_size=32, warm_up=True):
+    def run(self, server_settings=None, client_settings=None):
         """
         TODO
+        Fork a process for each clients and the server
+        Run their main function
+        
+        ARGS:
+            server_settings(optional): settings for running the server
+            client_settings(optional): settings for running the client
+        RETURN:
+            None
         """
+        raise NotImplementedError('Cannot handle problems in multiprocessing')
+        # start server
+        print('Starting server process...')
+        server_pro = mp.Process(target=self.server.run, kwargs=server_settings)
+        server_pro.start()
+
+        # assign processes to clients
+        print('Starting client processes...')
+        clients_pro = [mp.Process(target=c.run, args=(client_settings, )) for c in self.clients]
+        for c in clients_pro:
+            c.start()
         
+        # wait until all finished
+        for c in clients_pro:
+            c.join()
+        print('All clients have exited')
+
+        server_pro.join()
+        print('Server stopped working')
+    
+    def run_for_loop(self, rounds=3):
+        """
+        Use for loop to run FL instead of multiprocessing
+        In this situation, this class works as a server
         
+        RETURN:
+            None
+        """
+        # initialize
+        # self.server._warm_up(None)
+        current_param = self.server.net.state_dict()
+
+        for i in range(rounds):
+            # choose clients
+
+            # run clients
+            weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
+
+            # calculate shapley value
+            # self.server._shapley_value_sampling(weights)
+
+            # aggregate the paramters
+            current_param = weights[0]
+            for k in current_param:
+                for i in range(len(weights), 1):                
+                    current_param[k] += weights[i]
+                current_param[k] /= len(weights)
+
+            # evaluate
+            accu = self.server._evaluate(current_param)
+            print(f'Round[{i+1}/{rounds}] Test Accu: {accu}')
+
+
     def _split_dataset(self, dataset, random_state):
         """
-        Split dataset by assigned different samplers for each clients
+        Split dataset by assigned different datasets for each clients
         
         ARGS:
             dataset: dataset to be splited
             ramdom_state: control random seed
         RETURN:
-            samplers(list): A list of samplers for clients
-            warm_sampler(utils.Sampler): Use for warm up training in server
+            subsets(list): A list of datasets for clients
+            warm_set(utils.dataset): Use for warm up training in server
         """
         torch.manual_seed(random_state)
         
@@ -64,8 +124,8 @@ class Federated:
                 if i % self.C == 0:
                     warm_idx.append(i)
 
-        samplers = [utils.SubsetRandomSampler(i) for i in idx]
-        warm_sampler = utils.SubsetRandomSampler(warm_idx)
+        subsets = [utils.Subset(dataset, i) for i in idx]
+        warm_set = utils.Subset(dataset, warm_idx)
 
-        return samplers, warm_sampler
+        return subsets, warm_set
         

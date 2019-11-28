@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -17,15 +18,14 @@ class Server:
             channels: a list of Queues connected to clients
             testset: test the preformance of aggregation weights
             trainset: server's trainset, used as warm up (optional)
-            sampler: trainset sampler, used as warm up (optional)
             device: the device name used to warm up and evaluate net
     """
-    def __init__(self, net, channels, testset, trainset=None, sampler=None, device='cuda:0'):
+    def __init__(self, net, channels, testset, trainset=None, device='cuda:0'):
         self.device = torch.device(device)
         self.net = net.to(device)
+        self.current_params = self.net.state_dict()
         self.testset = testset
         self.trainset = trainset
-        self.sampler = sampler
 
         # set idx for channels, use as identity
         self.channels = {i: c for i, c in enumerate(channels)}
@@ -42,7 +42,7 @@ class Server:
 
     def run(self, round=10, c=1, warm_up=False, setting=None, random_state=7):
         """
-        Run the server to train model
+        Run the server to train model TODO
 
         ARGS:
             round: total round to run 
@@ -61,7 +61,7 @@ class Server:
             self._warm_up(setting)
 
         # start training
-        for r in round:
+        for r in range(round):
             # choose clients to run
             clients = self._choose_clients(c)
             
@@ -75,36 +75,37 @@ class Server:
             self._step(d_params)
 
             # evaluate
-            self._evaluate()
+            test_accu = self._evaluate()
+            print(f'Round[{r+1}/{round}] Test Accu: {test_accu}')
         
         print('Finished training the model')
         print(f'Test Accu:{self._evaluate()}')
 
-    def _warm_up(self, setting):
+    def _warm_up(self, settings):
         """
         Train server before starting client processes
 
         ARGS:
-            setting: customed setting to warm up
+            settings: customed settings to warm up
         RETURN:
             None
         """
         default_setting = {
             'epoch': 5, 
             'lr': 0.01,
-            'batch_size': 16,
+            'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
             'optimizer': optim.Adam,
         }
 
         # grab settings from
-        if setting:
-            for k in setting:
-                default_setting[k] = setting[k]
+        if settings:
+            for k in settings:
+                default_setting[k] = settings[k]
         
         # initialize before training
-        loader = utils.DataLoader(self.trainset, batch_size=default_setting['batch_size'] ,sampler=self.sampler, shuffle=True)
-        criterion = default_setting['loss']()
+        loader = utils.DataLoader(self.trainset, batch_size=default_setting['batch_size'] , shuffle=True)
+        criterion = default_setting['loss_func']()
         optimizer = default_setting['optimizer'](self.net.parameters(), lr=default_setting['lr'])
 
         print('Start heating server...')
@@ -127,7 +128,10 @@ class Server:
             
             # evaluate
             test_accu = self._evaluate()
-            print(f'Epoch[{epoch}/{default_setting["epoch"]}] Test accu:{test_accu}')
+            print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu:{test_accu}')
+        
+        # store the training result
+        self.current_params = self.net.state_dict()
 
     def _choose_clients(self, c):
         """
@@ -167,11 +171,15 @@ class Server:
         # send params to client by queue
         print('Send parameters to chosen clients...')
         for key in clients:
-            clients[key].put(self.net.state_dict())
+            clients[key].put(self.current_params)
 
         # fetch params from client 
         d_params = {}
         for key in clients:
+            while True:
+                if not clients[key].empty():
+                    break
+                time.sleep(5)
             d_params[key] = clients[key].get()
 
         return d_params
@@ -200,36 +208,41 @@ class Server:
             aggr_params[l] /= len(d_params)
 
         # update net's params
-        params = self.net.load_state_dict(aggr_params)
+        self.current_params = aggr_params
 
-    def _evaluate(self, params, use_orign=False):
+    def _evaluate(self, params=None):
         """
         Evaluate current net in the server
         ARGS:
+            params: params for self.net
 
         RETURN:
-            
+            accuracy_score: evalutaion result 
         """
-
         # For empty set in Shapley Value, it should return 0
-        if len(params) == 0:
+        if params and len(params) == 0:
             return 0.0
+
+        elif not params:
+            params = self.current_params
 
         loader = utils.DataLoader(self.testset, batch_size=1000, shuffle=False)
         predicted = []
         truth = []
 
         self.net.load_state_dict(params)
+        self.net.eval()
 
-        for data in loader:
-            inputs, labels = data[0].to(self.device), data[1].to(self.device)
-            # outputs = model(inputs)
-            outputs = self.net(inputs)
-            _, pred = torch.max(outputs.data, 1)
+        with torch.no_grad():
+            for data in loader:
+                inputs, labels = data[0].to(self.device), data[1].to(self.device)
+                # outputs = model(inputs)
+                outputs = self.net(inputs)
+                _, pred = torch.max(outputs.data, 1)
 
-            for p, q in zip(pred, labels):
-                predicted.append(p.item())
-                truth.append(q.item())
+                for p, q in zip(pred, labels):
+                    predicted.append(p.item())
+                    truth.append(q.item())
 
         return accuracy_score(truth, predicted)
 
