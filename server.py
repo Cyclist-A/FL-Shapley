@@ -261,7 +261,7 @@ class Server:
 
         for k in keys:
             aggr_params[k] = weights[0][k]
-            for i in range(len(weights), 1):
+            for i in range(1, len(weights)):
                 aggr_params[k] += weights[i][k]
 
             aggr_params[k] /= len(weights)

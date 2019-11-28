@@ -87,7 +87,7 @@ class Federated:
             # aggregate the paramters
             current_param = weights[0]
             for k in current_param:
-                for i in range(len(weights), 1):                
+                for i in range(1, len(weights)):                
                     current_param[k] += weights[i]
                 current_param[k] /= len(weights)
 
