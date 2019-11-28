@@ -24,7 +24,7 @@ class Client:
 
         # settings
         self.settings = {
-            'epoch': 5, 
+            'epoch': 2, 
             'lr': 0.01,
             'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
