@@ -9,7 +9,9 @@ import torch.utils.data as utils
 
 class Federated:
     """
-    A Framework for federated learning
+    A Framework for federated learning. Provide a for-loop version and a multiprocessing
+    version. The multiprocessing version can only run on LinuxOS. For multiprocessing, 
+    it average clients to every 
     
     ARGS:
         net: a pytorch neural network class 
@@ -31,9 +33,8 @@ class Federated:
         self.server = Server(net(), channel, testset, warm_set, device=devices[0])
         self.clients = [Client(net(), channel[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
 
-    def run(self, server_settings=None, client_settings=None):
+    def run(self, server_settings={}, client_settings=None):
         """
-        TODO
         Fork a process for each clients and the server
         Run their main function
         
@@ -43,7 +44,6 @@ class Federated:
         RETURN:
             None
         """
-        raise NotImplementedError('Cannot handle problems in multiprocessing')
         # start server
         print('Starting server process...')
         server_pro = mp.Process(target=self.server.run, kwargs=server_settings)
@@ -79,10 +79,10 @@ class Federated:
             # choose clients
 
             # run clients
-            weights = {j: c.run_round(current_param) for j, c in enumerate(self.clients)}
+            weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
 
             # calculate shapley value
-            self.server._shapley_value_sampling(weights)
+            # self.server._shapley_value_sampling(weights)
 
             # aggregate the paramters
             current_param = weights[0]

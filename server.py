@@ -1,6 +1,7 @@
-import time
+import sys
 import math
 import itertools
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,20 +32,10 @@ class Server:
 
         # set idx for channels, use as identity
         self.channels = {i: c for i, c in enumerate(channels)}
-
-    def __del__(self):
-        # stop all clients by send a signal -1
-        for idx in self.channels:
-            self.channels[idx].put(-1)
-
-        print('Kill all client, stop training')
-
-        # TODO save the model
         
-
-    def run(self, round=10, c=1, warm_up=False, setting=None, random_state=7):
+    def run(self, round=3, c=1, warm_up=False, setting=None, random_state=7):
         """
-        Run the server to train model TODO
+        Run the server to train model
 
         ARGS:
             round: total round to run 
@@ -52,7 +43,7 @@ class Server:
             warm_up: whether to train model before start federated learning
             random_state: random seed
         RETURN:
-            None
+            Noneit
         """
         # fixed seed
         torch.manual_seed(random_state)
@@ -63,25 +54,37 @@ class Server:
             self._warm_up(setting)
 
         # start training
+        print('Federated, Start!')
+        sys.stdout.flush()
+        
         for r in range(round):
             # choose clients to run
             clients = self._choose_clients(c)
             
             # get the response from chosen clients
-            d_params = self._params_from_client(clients)
+            params = self._params_from_client(clients)
 
             # calcualte shapley value
-            self._shapley_value_sampling(d_params, 6) # should set up samples
+#             self._shapley_value_sampling(d_params)
 
             # aggregate the parameters
-            self._step(d_params)
+            self._step(params)
 
             # evaluate
             test_accu = self._evaluate()
             print(f'Round[{r+1}/{round}] Test Accu: {test_accu}')
+            sys.stdout.flush()
         
         print('Finished training the model')
-        print(f'Test Accu:{self._evaluate()}')
+        print(f'Final Test Accu:{self._evaluate()}')
+        sys.stdout.flush()
+        
+        # kill all clients 
+        for idx in self.channels:
+            self.channels[idx].put(idx)
+
+        print('Kill all clients, stop training')
+        sys.stdout.flush()
 
     def _warm_up(self, settings):
         """
@@ -111,6 +114,7 @@ class Server:
         optimizer = default_setting['optimizer'](self.net.parameters(), lr=default_setting['lr'])
 
         print('Start heating server...')
+        sys.stdout.flush()
 
         for epoch in range(default_setting['epoch']):
             self.net.train()
@@ -131,6 +135,7 @@ class Server:
             # evaluate
             test_accu = self._evaluate()
             print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu:{test_accu}')
+            sys.stdout.flush()
         
         # store the training result
         self.current_params = self.net.state_dict()
@@ -142,7 +147,7 @@ class Server:
         ARGS:
             c: the proportion of chosen clients, should lie in (0, 1]
         RETURN:
-            chosen_clients(list): a list of queues, which are connected to chosen clients
+            chosen_clients(dict): client_id: queue . Queues are connected to chosen clients
         """
         # select a proportion of client
         if c == 1:
@@ -168,46 +173,46 @@ class Server:
         ARGS:
             clients: the dict of chosen clients
         RETURN:
-            d_params(dict): delta parameters from all chosen clients
+            params(dict): delta parameters from all chosen clients
         """
         # send params to client by queue
         print('Send parameters to chosen clients...')
+        sys.stdout.flush()
+        
+        message = {k: self.current_params[k].clone().detach().cpu() for k in self.current_params}
+        
         for key in clients:
-            clients[key].put(self.current_params)
+            clients[key].put(message)
 
         # fetch params from client 
-        d_params = {}
+        params = {}
         for key in clients:
-            while True:
-                if not clients[key].empty():
-                    break
-                time.sleep(5)
-            d_params[key] = clients[key].get()
+            params[key] = clients[key].get()
 
-        return d_params
+        return params
 
-    def _step(self, d_params):
+    def _step(self, params):
         """
         Aggregate delta parameters from different clients.
         Use aggregation resutls to update the model
 
         ARGS:
-            d_params: all parameters from clients
+            params: all parameters from clients
         RETURN:
             None
         """
         # aggregate
-        idx = d_params.keys()
+        idx = list(params.keys())
 
-        layers = d_params[idx[0]].keys()
+        layers = params[idx[0]].keys()
         aggr_params = {}
 
         for l in layers:
-            aggr_params[l] = d_params[idx[0]][l]
+            aggr_params[l] = params[idx[0]][l]
             for i in idx[1:]:
-                aggr_params[l] += d_params[i][l]
+                aggr_params[l] += params[i][l]
 
-            aggr_params[l] /= len(d_params)
+            aggr_params[l] /= len(params)
 
         # update net's params
         self.current_params = aggr_params
@@ -222,8 +227,7 @@ class Server:
             accuracy_score: evalutaion result 
         """
         # For empty set in Shapley Value, it should return 0
-        # print(params)
-        if type(params) is dict and len(params) == 0:
+        if params and len(params) == 0:
             return 0.0
 
         elif not params:

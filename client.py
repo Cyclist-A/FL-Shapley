@@ -1,4 +1,5 @@
-import time
+import sys
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -33,43 +34,42 @@ class Client:
 
     def run(self, settings=None):
         """
-        Run the client for local training TODO
+        Run the client for local training
 
         ARGS:
             settings: custom settings for local training
         RETURN:
             None
         """
-        raise NotImplementedError('Still working on solving mp problems')
-
         # customize settings
         if settings:
             for k in settings:
                 self.settings[k] = settings[k]
 
         while True:
-            # wait commands from server    
-            if self.channel.empty():
-                time.sleep(10)
-                continue
-
+            # wait commands from server
             params = self.channel.get()
 
             # finished training
-            if type(params) is int and params == -1:
+            if type(params) is int:
+                print('prepare 2 exit')
+                sys.stdout.flush()
                 break
 
-            # load params
+            # clone and load params
             self.net.load_state_dict(params)
             
             # train local model
             self._train()
 
-            # calcualte delta weights
-            d_weights = self._cal_d_weights(params)
-
             # update to server
-            self.channel.put(d_weights)
+            message = {}
+            for k in self.net.state_dict():
+                message[k] = self.net.state_dict()[k].clone().detach().cpu()
+            self.channel.put(message)
+        
+        print(f'Client {params} exited.')
+        sys.stdout.flush()
 
     def run_round(self, params, settings=None):
         """
@@ -132,23 +132,7 @@ class Client:
             # evaluate
             train_accu = self._evaluate()
             print(f'Epoch[{epoch + 1}/{self.settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
-
-    def _cal_d_weights(self, params):
-        """
-        Calculate the different between server's parameters and client;s parameters after training
-
-        ARGS:
-            params: params from server
-        RETURN:
-            d_params(dict): difference of the parameters
-        """
-        new_param = self.net.state_dict()
-        d_params = {}
-        
-        for k in params:
-            d_params[k] = new_param[k] - params[k]
-        
-        return d_params
+            sys.stdout.flush()
 
     def _evaluate(self):
         """
