@@ -2,6 +2,7 @@ from server import Server
 from client import Client
 
 import numpy as np
+import math
 import torch.multiprocessing as mp
 
 import torch
@@ -82,7 +83,9 @@ class Federated:
             weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
 
             # calculate shapley value
-            # self.server._shapley_value_sampling(weights)
+            N = len(weights)
+            samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
+            self.server._shapley_value_sampling(weights, samples)
 
             # aggregate the paramters
             current_param = weights[0]

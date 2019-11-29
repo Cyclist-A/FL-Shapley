@@ -1,5 +1,6 @@
 import sys
 import math
+import copy
 import itertools
 
 import torch
@@ -263,17 +264,21 @@ class Server:
         if not weights:
             return {}
 
-        aggr_p = {}
+        aggr_p = copy.deepcopy(weights[0])
+        # for k in weights[0].keys():
+        #     print("check the key: ", k)
+        #     for i in range(3):
+        #         print("%d weight: " % i, weights[i][k])
+        #     break
 
         for k in weights[0].keys():
-            aggr_p[k] = weights[0][k]
             for i in range(1, len(weights)):
                 aggr_p[k] += weights[i][k]
 
             aggr_p[k] /= len(weights)
-        for k in aggr_p.keys():
-            print("after aggregation: ", aggr_p[k])
-            break
+        # for k in aggr_p.keys():
+        #     print("after aggregation: ", aggr_p[k])
+        #     break
         return aggr_p
 
     def _shapley_value_sampling(self, d_params, samples):
@@ -282,27 +287,27 @@ class Server:
 
         ARGS:
             d_params:
+            samples:
         RETURN:
             result(dict): Client weights' shapely valye
         """
-        w_ids = list(d_params.keys())
-        N = len(w_ids)
-        # samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
+        N = len(d_params)
+        w_ids = d_params.keys()
         result = defaultdict(float)
         for p in itertools.permutations(w_ids, N):
             print("sampling: ", p)
             sv_pre = 0.0
             for cur in range(len(p)):
                 sv_cur = self._evaluate(self._aggregate([d_params[wk_id] for wk_id in p[:cur+1]]))
-                print("cur SV: ", sv_cur)
-                result[p[cur]] += (sv_cur - sv_pre)
-                print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
+                # print("cur SV: ", sv_cur)
+                result[p[cur]] += (sv_cur - sv_pre) / samples
+                # print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
                 sv_pre = sv_cur
         for key in result.keys():
-            result[key] /= samples
+            # result[key] /= samples
             print("%d worker's shapley value: %.6f" % (key, result[key]))
 
-    # def _shapley_value_sampling(self, d_params):
+    # def _shapley_value_sampling(self, d_params, samples=6):
     #     """
     #     Calculate Shapley Values for clients
     #
