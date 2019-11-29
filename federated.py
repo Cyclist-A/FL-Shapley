@@ -79,10 +79,10 @@ class Federated:
             # choose clients
 
             # run clients
-            weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
+            weights = {j: c.run_round(current_param) for j, c in enumerate(self.clients)}
 
             # calculate shapley value
-            # self.server._shapley_value_sampling(weights)
+            self.server._shapley_value_sampling(weights)
 
             # aggregate the paramters
             current_param = weights[0]

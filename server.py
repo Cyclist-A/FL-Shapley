@@ -1,4 +1,6 @@
 import time
+import math
+import itertools
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -69,7 +71,7 @@ class Server:
             d_params = self._params_from_client(clients)
 
             # calcualte shapley value
-            self._shapley_value_sampling(d_params)
+            self._shapley_value_sampling(d_params, 6) # should set up samples
 
             # aggregate the parameters
             self._step(d_params)
@@ -220,7 +222,8 @@ class Server:
             accuracy_score: evalutaion result 
         """
         # For empty set in Shapley Value, it should return 0
-        if params and len(params) == 0:
+        # print(params)
+        if type(params) is dict and len(params) == 0:
             return 0.0
 
         elif not params:
@@ -256,38 +259,60 @@ class Server:
         if not weights:
             return {}
 
-        keys = weights[0].keys()
-        aggr_params = {}
+        aggr_p = {}
 
-        for k in keys:
-            aggr_params[k] = weights[0][k]
+        for k in weights[0].keys():
+            aggr_p[k] = weights[0][k]
             for i in range(1, len(weights)):
-                aggr_params[k] += weights[i][k]
+                aggr_p[k] += weights[i][k]
 
-            aggr_params[k] /= len(weights)
+            aggr_p[k] /= len(weights)
+        for k in aggr_p.keys():
+            print("after aggregation: ", aggr_p[k])
+            break
+        return aggr_p
 
-        return aggr_params
-
-    def _shapley_value_sampling(self, d_params, samples=1000):
+    def _shapley_value_sampling(self, d_params, samples):
         """
         Calculate Shapley Values for clients
-        
+
         ARGS:
             d_params:
-            samples: sampling times
         RETURN:
             result(dict): Client weights' shapely valye
         """
-        w_ids = d_params.keys()
+        w_ids = list(d_params.keys())
+        N = len(w_ids)
+        # samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
         result = defaultdict(float)
-        for r in range(samples):
-            p = np.random.permutation(w_ids)
-            for i in range(p):
-                y = [d_params[_id] for _id in p[:i+1]]
-                y0 = [d_params[_id] for _id in p[:i]]
-                u_y, u_y0 = self._evaluate(self._aggregate(y)), self._evaluate(self._aggregate(y0))
-                delta = u_y - u_y0
-                result[p[i]] += delta
-        for (key, value) in result:
-            result[key] = value/samples
-        return result
+        for p in itertools.permutations(w_ids, N):
+            print("sampling: ", p)
+            sv_pre = 0.0
+            for cur in range(len(p)):
+                sv_cur = self._evaluate(self._aggregate([d_params[wk_id] for wk_id in p[:cur+1]]))
+                print("cur SV: ", sv_cur)
+                result[p[cur]] += (sv_cur - sv_pre)
+                print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
+                sv_pre = sv_cur
+        for key in result.keys():
+            result[key] /= samples
+            print("%d worker's shapley value: %.6f" % (key, result[key]))
+
+    # def _shapley_value_sampling(self, d_params):
+    #     """
+    #     Calculate Shapley Values for clients
+    #
+    #     ARGS:
+    #         d_params:
+    #     RETURN:
+    #         result(dict): Client weights' shapely valye
+    #     """
+    #     y = [d_params[i] for i in [2, 0, 1]]
+    #     y_0 = [d_params[j] for j in [0, 1, 2]]
+    #     print(type(y[0]))
+    #     y_ag, y_0_ag = self._aggregate(y), self._aggregate(y_0)
+    #     for k in y_ag.keys():
+    #         print(y_ag[k] - y_0_ag[k])
+    #     # u_y, u_y0 = self._evaluate(y_ag), self._evaluate(y_0_ag)
+    #     # delta = u_y - u_y0
+    #     # print(delta)
