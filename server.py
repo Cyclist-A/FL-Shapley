@@ -66,7 +66,7 @@ class Server:
             params = self._params_from_client(clients)
 
             # calcualte shapley value
-#             self._shapley_value_sampling(d_params)
+            self._shapley_value_sampling(params)
 
             # aggregate the parameters
             self._step(params)
@@ -77,7 +77,7 @@ class Server:
             sys.stdout.flush()
         
         print('Finished training the model')
-        print(f'Final Test Accu:{self._evaluate()}')
+        print(f'Final Test Accu: {self._evaluate()}')
         sys.stdout.flush()
         
         # kill all clients 
@@ -209,7 +209,7 @@ class Server:
         aggr_params = {}
 
         for l in layers:
-            aggr_params[l] = params[idx[0]][l]
+            aggr_params[l] = params[idx[0]][l].clone().detach().cpu()
             for i in idx[1:]:
                 aggr_params[l] += params[i][l]
 
@@ -281,24 +281,27 @@ class Server:
         #     break
         return aggr_p
 
-    def _shapley_value_sampling(self, d_params, samples):
+    def _shapley_value_sampling(self, weights):
         """
         Calculate Shapley Values for clients
 
         ARGS:
-            d_params:
-            samples:
+            weights: weights uploaded from clients
         RETURN:
             result(dict): Client weights' shapely valye
         """
-        N = len(d_params)
-        w_ids = d_params.keys()
+        N = len(weights)
+
+        # calculate sample times
+        samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
+
+        w_ids = weights.keys()
         result = defaultdict(float)
         for p in itertools.permutations(w_ids, N):
             print("sampling: ", p)
             sv_pre = 0.0
             for cur in range(len(p)):
-                sv_cur = self._evaluate(self._aggregate([d_params[wk_id] for wk_id in p[:cur+1]]))
+                sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur+1]]))
                 # print("cur SV: ", sv_cur)
                 result[p[cur]] += (sv_cur - sv_pre) / samples
                 # print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
