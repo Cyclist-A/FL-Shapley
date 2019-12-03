@@ -320,10 +320,11 @@ class Server:
         """
         w_ids = weights.keys()
         result = defaultdict(float)
+        global_result = self._evaluate((self._aggregate(weights)))
 
         for w in w_ids:
             print("evaluating %d weight's LOO value..." % w)
-            res = self._evaluate(self._aggregate([weights[wk_id] for wk_id in w_ids if wk_id != w]))
-            result[w] += res
+            res = global_result - self._evaluate(self._aggregate([weights[wk_id] for wk_id in w_ids if wk_id != w]))
+            result[w] = res
         for key in result.keys():
             print("%d worker's LOO value: %.6f" % (key, result[key]))
