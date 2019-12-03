@@ -327,21 +327,3 @@ class Server:
             result[w] += res
         for key in result.keys():
             print("%d worker's LOO value: %.6f" % (key, result[key]))
-    # def _shapley_value_sampling(self, d_params, samples=6):
-    #     """
-    #     Calculate Shapley Values for clients
-    #
-    #     ARGS:
-    #         d_params:
-    #     RETURN:
-    #         result(dict): Client weights' shapely valye
-    #     """
-    #     y = [d_params[i] for i in [2, 0, 1]]
-    #     y_0 = [d_params[j] for j in [0, 1, 2]]
-    #     print(type(y[0]))
-    #     y_ag, y_0_ag = self._aggregate(y), self._aggregate(y_0)
-    #     for k in y_ag.keys():
-    #         print(y_ag[k] - y_0_ag[k])
-    #     # u_y, u_y0 = self._evaluate(y_ag), self._evaluate(y_0_ag)
-    #     # delta = u_y - u_y0
-    #     # print(delta)
