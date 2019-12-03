@@ -20,16 +20,18 @@ class Federated:
         trainset: the whole training set, split in i.i.d
         testset: testset to evaluate server's preformance
         devices: a list of available devices
+        non_iid: whether to split training set in non-iid way
+        imbalanced_rate: imbalance strength of non-iid sampling
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, C, trainest, testset, devices, random_state=100):
+    def __init__(self, net, C, trainset, testset, devices, non_iid=False, imbalanced_rate=0.8, random_state=100):
         # construct channel to connect server and client
         self.C = C
         channel_server_in = [mp.Queue() for i in range(C)]
         channel_server_out = [mp.Queue() for i in range(C)]
 
         # split dataset for different clients
-        subsets, warm_set = self._split_dataset(trainest, random_state)
+        subsets, warm_set = self._split_dataset(trainset, non_iid, imbalanced_rate, random_state)
 
         # create a server and clients
         self.server = Server(net(), channel_server_in, channel_server_out, testset, warm_set, device=devices[0])
@@ -98,36 +100,75 @@ class Federated:
             print(f'Round[{i+1}/{rounds}] Test Accu: {accu}')
 
 
-    def _split_dataset(self, dataset, random_state):
+    def _split_dataset(self, dataset, non_iid, imbalanced_rate, random_state):
         """
         Split dataset by assigned different datasets for each clients
         
         ARGS:
             dataset: dataset to be splited
+            non_iid: whether to sample in non-iid way
+            imbalanced_rate: imbalance strength
             ramdom_state: control random seed
         RETURN:
             subsets(list): A list of datasets for clients
             warm_set(utils.dataset): Use for warm up training in server
         """
-        torch.manual_seed(random_state)
+        # set random state
+        np.random.seed(random_state)
+        # subset index for each client
+        subset_idx = [[] for i in range(self.C)]
+
+        if non_iid:
+            # randomly choose a label to become non_iid
+            label = dataset[np.random.randint(len(dataset))][1]
+
+            # split idx by label (whether chosen)
+            normal_idx = []
+            label_idx = []
+            for i, data in enumerate(dataset):
+                if data[1] == label:
+                    label_idx.append(i)
+                else:
+                    normal_idx.append(i)
+            np.random.shuffle(normal_idx)
+            np.random.shuffle(label_idx)
+
+            # construct subset list, last clients will have most choosen label
+            # split data by split point
+            label_split_point = int(len(label_idx) * imbalanced_rate)
+            normal_split_point = int(len(dataset) / self.C) - label_split_point
+
+            subset_idx[-1] += label_idx[:label_split_point]
+            subset_idx[-1] += normal_idx[:normal_split_point]
+
+            # remain index for other clients
+            remain_idx = normal_idx[normal_split_point:] + label_idx[label_split_point:]
+            for i, idx in enumerate(remain_idx):
+                subset_idx[i % (self.C-1)].append(idx)
+            
+            warm_idx = [1, 2, 3] # TODO
         
-        # construct subset list
-        idx = [[] for i in range(self.C)]
+        else:
+            # construct subset list
+            tmp = [i for i in range(len(dataset))]
+            np.random.shuffle(tmp)
+            for i, t in enumerate(tmp):
+                subset_idx[i%self.C].append(t)
 
-        tmp = [i for i in range(len(dataset))]
-        np.random.shuffle(tmp)
-        for i, t in enumerate(tmp):
-            idx[i%self.C].append(t)
+            # build warm up idx
+            warm_idx = []
+            for l in subset_idx:
+                for i, t in enumerate(l):
+                    if i % self.C == 0:
+                        warm_idx.append(i)
 
-        # build warm up idx
-        warm_idx = []
-        for l in idx:
-            for i, t in enumerate(l):
-                if i % self.C == 0:
-                    warm_idx.append(i)
-
-        subsets = [utils.Subset(dataset, i) for i in idx]
+        subsets = [utils.Subset(dataset, i) for i in subset_idx]
+        for s in subsets:
+            count = 0
+            for i in s:
+                if i[1] == label:
+                    count += 1
+            print(count)
         warm_set = utils.Subset(dataset, warm_idx)
 
-        return subsets, warm_set
-        
+        return subsets, warm_set     
