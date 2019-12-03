@@ -287,7 +287,7 @@ class Server:
         ARGS:
             weights: weights uploaded from clients
         RETURN:
-            result(dict): Client weights' shapely valye
+            result(dict): Client weights' shapley value
         """
         N = len(weights)
 
@@ -309,6 +309,24 @@ class Server:
             # result[key] /= samples
             print("%d worker's shapley value: %.6f" % (key, result[key]))
 
+    def _leave_one_out(self, weights):
+        """
+        Calculate Leave-One-Out(LOO) evaluation
+
+        ARGS:
+            weights: weights uploaded from clients
+        RETURN:
+            result(dict): Each client's weight's LOO evaluation value
+        """
+        w_ids = weights.keys()
+        result = defaultdict(float)
+
+        for w in w_ids:
+            print("evaluating %d weight's LOO value..." % w)
+            res = self._evaluate(self._aggregate([weights[wk_id] for wk_id in w_ids if wk_id != w]))
+            result[w] += res
+        for key in result.keys():
+            print("%d worker's LOO value: %.6f" % (key, result[key]))
     # def _shapley_value_sampling(self, d_params, samples=6):
     #     """
     #     Calculate Shapley Values for clients
