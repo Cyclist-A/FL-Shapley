@@ -84,7 +84,7 @@ class Federated:
             weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
 
             # calculate shapley value            
-            # self.server._shapley_value_sampling(weights)
+            self.server._shapley_value_sampling(weights)
 
             # calculate LOO value
             self.server._leave_one_out(weights)
