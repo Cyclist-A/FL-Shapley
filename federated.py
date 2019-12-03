@@ -25,14 +25,15 @@ class Federated:
     def __init__(self, net, C, trainest, testset, devices, random_state=100):
         # construct channel to connect server and client
         self.C = C
-        channel = [mp.Queue() for i in range(C)]
+        channel_server_in = [mp.Queue() for i in range(C)]
+        channel_server_out = [mp.Queue() for i in range(C)]
 
         # split dataset for different clients
         subsets, warm_set = self._split_dataset(trainest, random_state)
 
         # create a server and clients
-        self.server = Server(net(), channel, testset, warm_set, device=devices[0])
-        self.clients = [Client(net(), channel[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
+        self.server = Server(net(), channel_server_in, channel_server_out, testset, warm_set, device=devices[0])
+        self.clients = [Client(net(), channel_server_out[i], channel_server_in[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
 
     def run(self, server_settings={}, client_settings=None):
         """
@@ -82,10 +83,8 @@ class Federated:
             # run clients
             weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
 
-            # calculate shapley value
-            N = len(weights)
-            samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
-            self.server._shapley_value_sampling(weights, samples)
+            # calculate shapley value            
+            self.server._shapley_value_sampling(weights)
 
             # aggregate the paramters
             current_param = weights[0]

@@ -19,12 +19,13 @@ class Server:
         
         ARGS:
             net: a pyTorch neural network that used by clients and server
-            channels: a list of Queues connected to clients
+            channels_in: a list of Queues connected to clients, used to send weights to clients
+            channels_out: a list of Queues connected to clients, used to receive weights from clients
             testset: test the preformance of aggregation weights
             trainset: server's trainset, used as warm up (optional)
             device: the device name used to warm up and evaluate net
     """
-    def __init__(self, net, channels, testset, trainset=None, device='cuda:0'):
+    def __init__(self, net, channels_in, channels_out, testset, trainset=None, device='cuda:0'):
         self.device = torch.device(device)
         self.net = net.to(device)
         self.current_params = self.net.state_dict()
@@ -32,14 +33,15 @@ class Server:
         self.trainset = trainset
 
         # set idx for channels, use as identity
-        self.channels = {i: c for i, c in enumerate(channels)}
+        self.channels_in = {i: c for i, c in enumerate(channels_in)}
+        self.channels_out = {i: c for i, c in enumerate(channels_out)}
         
-    def run(self, round=3, c=1, warm_up=False, setting=None, random_state=7):
+    def run(self, rounds=3, c=1, warm_up=False, setting=None, random_state=7):
         """
         Run the server to train model
 
         ARGS:
-            round: total round to run 
+            rounds: total rounds to run 
             c: proportion of chosen clients in each round
             warm_up: whether to train model before start federated learning
             random_state: random seed
@@ -58,12 +60,12 @@ class Server:
         print('Federated, Start!')
         sys.stdout.flush()
         
-        for r in range(round):
+        for r in range(rounds):
             # choose clients to run
-            clients = self._choose_clients(c)
+            client_ids = self._choose_clients(c)
             
             # get the response from chosen clients
-            params = self._params_from_client(clients)
+            params = self._params_from_client(client_ids)
 
             # calcualte shapley value
             self._shapley_value_sampling(params)
@@ -73,7 +75,7 @@ class Server:
 
             # evaluate
             test_accu = self._evaluate()
-            print(f'Round[{r+1}/{round}] Test Accu: {test_accu}')
+            print(f'Round[{r+1}/{rounds}] Test Accu: {test_accu}')
             sys.stdout.flush()
         
         print('Finished training the model')
@@ -81,8 +83,8 @@ class Server:
         sys.stdout.flush()
         
         # kill all clients 
-        for idx in self.channels:
-            self.channels[idx].put(idx)
+        for idx in self.channels_in:
+            self.channels_in[idx].put(idx)
 
         print('Kill all clients, stop training')
         sys.stdout.flush()
@@ -148,47 +150,44 @@ class Server:
         ARGS:
             c: the proportion of chosen clients, should lie in (0, 1]
         RETURN:
-            chosen_clients(dict): client_id: queue . Queues are connected to chosen clients
+            idx(list): client id which are chosen
         """
         # select a proportion of client
         if c == 1:
-            return self.channels
+            return self.channels_in
         elif c > 1 or c <= 0:
             raise ValueError(f'The proportion of chosen clients should lie in (0, 1]. Now is {c}')
         
         # randomly choose clients idx
-        num = max(c * len(self.channels), 1)
-        idx = [i for i in range(len(self.channels))]
+        num = max(c * len(self.channels_in), 1)
+        idx = [i for i in range(len(self.channels_in))]
         np.random.shuffle(idx)
         idx = idx[:num]
-        
-        # choose clients by idx
-        chosen_clients = {i: self.channels[i] for i in idx}
 
-        return chosen_clients
+        return idx
 
-    def _params_from_client(self, clients):
+    def _params_from_client(self, client_ids):
         """
         Fetch local training resutls from clients
 
         ARGS:
-            clients: the dict of chosen clients
+            client_id: the dict of chosen clients
         RETURN:
             params(dict): delta parameters from all chosen clients
         """
         # send params to client by queue
-        print('Send parameters to chosen clients...')
+        print('Sending parameters to chosen clients...')
         sys.stdout.flush()
         
         message = {k: self.current_params[k].clone().detach().cpu() for k in self.current_params}
         
-        for key in clients:
-            clients[key].put(message)
+        for idx in client_ids:
+            self.channels_in[idx].put(message)
 
         # fetch params from client 
         params = {}
-        for key in clients:
-            params[key] = clients[key].get()
+        for idx in client_ids:
+            params[idx] = self.channels_out[idx].get()
 
         return params
 

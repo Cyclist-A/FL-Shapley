@@ -13,19 +13,21 @@ class Client:
         
         ARGS:
             net: a pyTorch neural network that used by clients and server
-            channel: a Queue connected to server
+            channel_in: a Queue connected to server, used to send weights to server
+            channel_out: a Queue connected to server, used to recevice weights from the server
             dataset: clients dataset
             device: training device
     """
-    def __init__(self, net, channel, dataset, device='cpu'):
+    def __init__(self, net, channel_in, channel_out, dataset, device='cpu'):
         self.net = net
-        self.channel = channel
+        self.channel_in = channel_in
+        self.channel_out = channel_out
         self.dataset = dataset
         self.device = torch.device(device)
 
         # settings
         self.settings = {
-            'epoch': 2, 
+            'epoch': 3, 
             'lr': 0.01,
             'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
@@ -48,12 +50,10 @@ class Client:
 
         while True:
             # wait commands from server
-            params = self.channel.get()
+            params = self.channel_out.get()
 
             # finished training
             if type(params) is int:
-                print('prepare 2 exit')
-                sys.stdout.flush()
                 break
 
             # clone and load params
@@ -66,7 +66,7 @@ class Client:
             message = {}
             for k in self.net.state_dict():
                 message[k] = self.net.state_dict()[k].clone().detach().cpu()
-            self.channel.put(message)
+            self.channel_in.put(message)
         
         print(f'Client {params} exited.')
         sys.stdout.flush()
