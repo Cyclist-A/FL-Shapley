@@ -70,6 +70,7 @@ class Server:
 
             # calcualte shapley value
             self._shapley_value_sampling(params)
+            # self._leave_one_out(params)
 
             # aggregate the parameters
             self._step(params, length)
@@ -304,12 +305,12 @@ class Server:
         # calculate sample times
         samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
 
-        w_ids = weights.keys()
+        w_ids = list(weights.keys())
         result = defaultdict(float)
         # for p in itertools.permutations(w_ids, N):
-        for r in range(samples):
+        for r in tqdm(range(samples), desc='Sampling'):
             p = np.random.permutation(w_ids)
-            print("sampling: ", p)
+            # print("sampling: ", p)
             sv_pre = 0.0
             for cur in range(N):
                 sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur+1]]))
