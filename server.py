@@ -1,6 +1,7 @@
 import sys
 import math
 import copy
+from tqdm import tqdm
 import itertools
 
 import torch
@@ -298,6 +299,7 @@ class Server:
         RETURN:
             result(dict): Client weights' shapely valye
         """
+        print('Start calculating Sarpley Value for each chosen worker')
         N = len(weights)
 
         # calculate sample times

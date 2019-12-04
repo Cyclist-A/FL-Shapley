@@ -20,22 +20,22 @@ class Federated:
         trainset: the whole training set, split in i.i.d
         testset: testset to evaluate server's preformance
         devices: a list of available devices
-        non_iid: whether to split training set in non-iid way
+        split_method: the method to split the dataset
         imbalanced_rate: imbalance strength of non-iid sampling
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, C, trainset, testset, devices, non_iid=False, imbalanced_rate=0.8, random_state=100):
+    def __init__(self, net, C, trainset, testset, devices, split_method='iid', imbalanced_rate=0.8, random_state=100):
         # construct channel to connect server and client
         self.C = C
         channel_server_in = [mp.Queue() for i in range(C)]
         channel_server_out = [mp.Queue() for i in range(C)]
 
         # split dataset for different clients
-        subsets, warm_set = self._split_dataset(trainset, non_iid, imbalanced_rate, random_state)
+        subsets, warm_set = self._split_dataset(trainset, split_method, imbalanced_rate, random_state)
 
         # create a server and clients
         self.server = Server(net(), channel_server_in, channel_server_out, testset, warm_set, device=devices[0])
-        self.clients = [Client(net(), channel_server_out[i], channel_server_in[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
+        self.clients = [Client(i, net(), channel_server_out[i], channel_server_in[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
 
     def run(self, server_settings={}, client_settings=None):
         """
@@ -100,13 +100,13 @@ class Federated:
             print(f'Round[{i+1}/{rounds}] Test Accu: {accu}')
 
 
-    def _split_dataset(self, dataset, non_iid, imbalanced_rate, random_state):
+    def _split_dataset(self, dataset, split_method, imbalanced_rate, random_state):
         """
         Split dataset by assigned different datasets for each clients
         
         ARGS:
             dataset: dataset to be splited
-            non_iid: whether to sample in non-iid way
+            split_method: whether to sample in non-iid way
             imbalanced_rate: imbalance strength
             ramdom_state: control random seed
         RETURN:
@@ -118,7 +118,8 @@ class Federated:
         # subset index for each client
         subset_idx = [[] for i in range(self.C)]
 
-        if non_iid:
+        # split by different methods
+        if split_method == 'non-iid':
             # randomly choose a label to become non_iid
             label = dataset[np.random.randint(len(dataset))][1]
 
@@ -148,7 +149,7 @@ class Federated:
             
             warm_idx = [1, 2, 3] # TODO
         
-        else:
+        elif split_method == 'iid':
             # construct subset list
             tmp = [i for i in range(len(dataset))]
             np.random.shuffle(tmp)
@@ -162,13 +163,11 @@ class Federated:
                     if i % self.C == 0:
                         warm_idx.append(i)
 
+        else:
+            raise ValueError(f"Split method can only be 'iid', 'imba-label' or 'imba-size'. \
+                Your input is {split_method} ")
+
         subsets = [utils.Subset(dataset, i) for i in subset_idx]
-        for s in subsets:
-            count = 0
-            for i in s:
-                if i[1] == label:
-                    count += 1
-            print(count)
         warm_set = utils.Subset(dataset, warm_idx)
 
         return subsets, warm_set     

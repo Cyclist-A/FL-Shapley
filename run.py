@@ -18,7 +18,7 @@ TESTSET = torchvision.datasets.MNIST('../public_set', train=False, transform=tra
 DEVICE_LIST=['cuda:1', 'cuda:2']
 
 SERVER_SETTINGS = {
-    'warm_up': True,
+    'warm_up': False,
     'setting':{
         'batch_size': 128
     }
@@ -28,5 +28,5 @@ SERVER_SETTINGS = {
 
 if __name__ == '__main__':
     mp.set_start_method('spawn')
-    fl = Federated(NET, C, TRAINSET, TESTSET, DEVICE_LIST)
+    fl = Federated(NET, C, TRAINSET, TESTSET, DEVICE_LIST, imbalanced_rate=0.99)
     fl.run()
