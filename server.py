@@ -303,8 +303,8 @@ class Server:
                     sv_pre = sv_cur
         else:
             # calculate sample times
-            samples = int(math.sqrt(math.factorial(N))) if N < 10 else 1000
-            print("Samples Number: %d, All space: %d" % (samples, math.factorial(N)) )
+            samples = int(math.sqrt(math.factorial(N))) * 10 if N < 10 else 1000
+            print("Samples %d of %d" % (samples, math.factorial(N)))
             # for p in itertools.permutations(w_ids, N):
             for r in tqdm(range(samples)):
                 p = np.random.permutation(w_ids)
