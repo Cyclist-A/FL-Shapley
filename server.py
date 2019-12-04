@@ -297,20 +297,21 @@ class Server:
         ARGS:
             weights: weights uploaded from clients
         RETURN:
-            result(dict): Client weights' shapely valye
+            result(dict): Client weights' shapley value
         """
         print('Start calculating Sarpley Value for each chosen worker')
         N = len(weights)
-
         # calculate sample times
         samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
 
         w_ids = weights.keys()
         result = defaultdict(float)
-        for p in itertools.permutations(w_ids, N):
+        # for p in itertools.permutations(w_ids, N):
+        for r in range(samples):
+            p = np.random.permutation(w_ids)
             print("sampling: ", p)
             sv_pre = 0.0
-            for cur in range(len(p)):
+            for cur in range(N):
                 sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur+1]]))
                 # print("cur SV: ", sv_cur)
                 result[p[cur]] += (sv_cur - sv_pre) / samples
@@ -320,21 +321,22 @@ class Server:
             # result[key] /= samples
             print("%d worker's shapley value: %.6f" % (key, result[key]))
 
-    # def _shapley_value_sampling(self, d_params, samples=6):
-    #     """
-    #     Calculate Shapley Values for clients
-    #
-    #     ARGS:
-    #         d_params:
-    #     RETURN:
-    #         result(dict): Client weights' shapely valye
-    #     """
-    #     y = [d_params[i] for i in [2, 0, 1]]
-    #     y_0 = [d_params[j] for j in [0, 1, 2]]
-    #     print(type(y[0]))
-    #     y_ag, y_0_ag = self._aggregate(y), self._aggregate(y_0)
-    #     for k in y_ag.keys():
-    #         print(y_ag[k] - y_0_ag[k])
-    #     # u_y, u_y0 = self._evaluate(y_ag), self._evaluate(y_0_ag)
-    #     # delta = u_y - u_y0
-    #     # print(delta)
+    def _leave_one_out(self, weights):
+        """
+        Calculate Leave-One-Out(LOO) evaluation
+
+        ARGS:
+            weights: weights uploaded from clients
+        RETURN:
+            result(dict): Each client's weight's LOO evaluation value
+        """
+        w_ids = weights.keys()
+        result = defaultdict(float)
+        global_result = self._evaluate((self._aggregate(weights)))
+
+        for w in w_ids:
+            print("evaluating %d weight's LOO value..." % w)
+            res = global_result - self._evaluate(self._aggregate([weights[wk_id] for wk_id in w_ids if wk_id != w]))
+            result[w] = res
+        for key in result.keys():
+            print("%d worker's LOO value: %.6f" % (key, result[key]))

@@ -88,6 +88,9 @@ class Federated:
             # calculate shapley value            
             self.server._shapley_value_sampling(weights)
 
+            # calculate LOO value
+            self.server._leave_one_out(weights)
+
             # aggregate the paramters
             current_param = weights[0]
             for k in current_param:
