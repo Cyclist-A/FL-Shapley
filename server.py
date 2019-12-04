@@ -65,13 +65,13 @@ class Server:
             client_ids = self._choose_clients(c)
             
             # get the response from chosen clients
-            params = self._params_from_client(client_ids)
+            params, length = self._params_from_client(client_ids)
 
             # calcualte shapley value
             self._shapley_value_sampling(params)
 
             # aggregate the parameters
-            self._step(params)
+            self._step(params, length)
 
             # evaluate
             test_accu = self._evaluate()
@@ -173,7 +173,8 @@ class Server:
         ARGS:
             client_id: the dict of chosen clients
         RETURN:
-            params(dict): delta parameters from all chosen clients
+            params(dict): parameters from all chosen clients
+            length(dict): the length of chosen client's datasets
         """
         # send params to client by queue
         print('Sending parameters to chosen clients...')
@@ -186,33 +187,41 @@ class Server:
 
         # fetch params from client 
         params = {}
+        length = {}
         for idx in client_ids:
             params[idx] = self.channels_out[idx].get()
+            length[idx] = self.channels_out[idx].get()
 
-        return params
+        return params, length
 
-    def _step(self, params):
+    def _step(self, params, length):
         """
         Aggregate delta parameters from different clients.
         Use aggregation resutls to update the model
 
         ARGS:
             params: all parameters from clients
+            length: client datasets' lenght
         RETURN:
             None
         """
-        # aggregate
         idx = list(params.keys())
 
+        # calculate weight for each client's parameters
+        total = 0.0
+        for i in idx:
+            total += length[i]
+        for i in idx:
+            length[i] = length[i] / total
+
+        # aggregate
         layers = params[idx[0]].keys()
         aggr_params = {}
 
         for l in layers:
-            aggr_params[l] = params[idx[0]][l].clone().detach().cpu()
+            aggr_params[l] = params[idx[0]][l].clone().detach().cpu().to(torch.float)
             for i in idx[1:]:
-                aggr_params[l] += params[i][l]
-
-            aggr_params[l] /= len(params)
+                aggr_params[l] += length[i] * params[i][l]
 
         # update net's params
         self.current_params = aggr_params
