@@ -15,7 +15,8 @@ NET = MyNet
 C = 3
 TRAINSET = torchvision.datasets.MNIST('./public_set', train=True, transform=transform, download=True)
 TESTSET = torchvision.datasets.MNIST('./public_set', train=False, transform=transform)
-DEVICE_LIST=['cuda:1', 'cuda:2']
+DEVICE_LIST=['cuda:2', 'cuda:3']
+
 
 SERVER_SETTINGS = {
     'warm_up': True,
