@@ -290,16 +290,17 @@ class Server:
             result(dict): Client weights' shapley value
         """
         N = len(weights)
-
         # calculate sample times
         samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
 
         w_ids = weights.keys()
         result = defaultdict(float)
-        for p in itertools.permutations(w_ids, N):
+        # for p in itertools.permutations(w_ids, N):
+        for r in range(samples):
+            p = np.random.permutation(w_ids)
             print("sampling: ", p)
             sv_pre = 0.0
-            for cur in range(len(p)):
+            for cur in range(N):
                 sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur+1]]))
                 # print("cur SV: ", sv_cur)
                 result[p[cur]] += (sv_cur - sv_pre) / samples
