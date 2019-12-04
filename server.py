@@ -301,26 +301,6 @@ class Server:
         RETURN:
             result(dict): Client weights' shapley value
         """
-<<<<<<< HEAD
-        print('Start calculating Sarpley Value for each chosen worker')
-        N = len(weights)
-        # calculate sample times
-        samples = math.factorial(N) * 0.1 if N > 10 else math.factorial(N)
-
-        w_ids = list(weights.keys())
-        result = defaultdict(float)
-        # for p in itertools.permutations(w_ids, N):
-        for r in tqdm(range(samples), desc='Sampling'):
-            p = np.random.permutation(w_ids)
-            # print("sampling: ", p)
-            sv_pre = 0.0
-            for cur in range(N):
-                sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur+1]]))
-                # print("cur SV: ", sv_cur)
-                result[p[cur]] += (sv_cur - sv_pre) / samples
-                # print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
-                sv_pre = sv_cur
-=======
         result = defaultdict(float)
         N = len(weights)
         w_ids = list(weights.keys())
@@ -347,7 +327,6 @@ class Server:
                     result[p[cur]] += (sv_cur - sv_pre) / samples
                     # print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
                     sv_pre = sv_cur
->>>>>>> bf09227c3c6981d343ca5f6976ac72a0bb804eeb
         for key in result.keys():
             # result[key] /= samples
             print("%d worker's shapley value: %.6f" % (key, result[key]))

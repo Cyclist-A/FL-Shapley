@@ -34,7 +34,7 @@ class Federated:
         channel_server_out = [mp.Queue() for i in range(C)]
 
         # split dataset for different clients
-        subsets, warm_set = self._split_dataset(trainset, split_method, imbalanced_rate, warm_rate, random_state)
+        subsets, warm_set = self._split_dataset(trainset, split_method, imbalanced_rate, capacity, warm_rate, random_state)
 
         # create a server and clients
         self.server = Server(net(), channel_server_in, channel_server_out, testset, warm_set, device=devices[0])
@@ -184,7 +184,7 @@ class Federated:
 
         # bug detection
         if normal_split_point <= 0:
-            raise RuntimeError('Overloaded. The number of data points is over than client\'s capacity.)
+            raise RuntimeError("Overloaded. The number of data points isover than client's capacity.")
 
         subset_idx[-1] += label_idx[:label_split_point]
         subset_idx[-1] += normal_idx[:normal_split_point]
@@ -209,7 +209,8 @@ class Federated:
             raise ValueError(f'')
         elif abs(sum(capacity)) - 1 > 1e-8:
             raise ValueError(f'The sum of the capacity list should be 1, got{sum(capacity)}')
-        raise NotImplementedError()
+        raise NotImplementedError
+        return -1
 
     def _split_iid(self, dataset):
         """
