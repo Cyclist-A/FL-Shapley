@@ -12,13 +12,15 @@ class Client:
         Client instance in federated learning
         
         ARGS:
+            idx: clients id, use for screen message
             net: a pyTorch neural network that used by clients and server
             channel_in: a Queue connected to server, used to send weights to server
             channel_out: a Queue connected to server, used to recevice weights from the server
             dataset: clients dataset
             device: training device
     """
-    def __init__(self, net, channel_in, channel_out, dataset, device='cpu'):
+    def __init__(self, idx, net, channel_in, channel_out, dataset, device='cpu'):
+        self.idx = idx
         self.net = net
         self.channel_in = channel_in
         self.channel_out = channel_out
@@ -67,6 +69,7 @@ class Client:
             for k in self.net.state_dict():
                 message[k] = self.net.state_dict()[k].clone().detach().cpu()
             self.channel_in.put(message)
+            self.channel_in.put(len(self.dataset))  # use for aggregation
         
         print(f'Client {params} exited.')
         sys.stdout.flush()
@@ -131,7 +134,7 @@ class Client:
             
             # evaluate
             train_accu = self._evaluate()
-            print(f'Epoch[{epoch + 1}/{self.settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
+            print(f'Client {self.idx}: Epoch[{epoch + 1}/{self.settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
             sys.stdout.flush()
 
     def _evaluate(self):

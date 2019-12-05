@@ -12,11 +12,9 @@ transform = torchvision.transforms.Compose([
 
 # some settings
 NET = MyNet
-C = 3
-TRAINSET = torchvision.datasets.MNIST('./public_set', train=True, transform=transform, download=True)
-TESTSET = torchvision.datasets.MNIST('./public_set', train=False, transform=transform)
-DEVICE_LIST=['cuda:2', 'cuda:3']
-
+TRAINSET = torchvision.datasets.MNIST('../public_set', train=True, transform=transform, download=True)
+TESTSET = torchvision.datasets.MNIST('../public_set', train=False, transform=transform)
+DEVICE_LIST=['cuda:1', 'cuda:2']
 
 SERVER_SETTINGS = {
     'warm_up': True,
@@ -29,6 +27,6 @@ SERVER_SETTINGS = {
 
 if __name__ == '__main__':
     mp.set_start_method('spawn')
-    fl = Federated(NET, C, TRAINSET, TESTSET, DEVICE_LIST)
-    fl.run()
+    fl = Federated(NET, TRAINSET, TESTSET, DEVICE_LIST, imbalanced_rate=0.99)
+    fl.run(server_settings=SERVER_SETTINGS)
     # fl.run_for_loop()
