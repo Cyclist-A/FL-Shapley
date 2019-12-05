@@ -75,7 +75,7 @@ class Server:
             self._step(params)
 
             # evaluate
-            test_accu = self._evaluate()
+            _, test_accu = self._evaluate()
             print(f'Round[{r+1}/{rounds}] Test Accu: {test_accu}')
             sys.stdout.flush()
         
@@ -137,7 +137,7 @@ class Server:
                 epoch_loss += loss.item()
             
             # evaluate
-            test_accu = self._evaluate()
+            _, test_accu = self._evaluate()
             print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu:{test_accu}')
             sys.stdout.flush()
         
@@ -241,6 +241,8 @@ class Server:
         self.net.load_state_dict(params)
         self.net.eval()
 
+        CE_loss = 0.0
+        loss_func = nn.CrossEntropyLoss()
         with torch.no_grad():
             for data in loader:
                 inputs, labels = data[0].to(self.device), data[1].to(self.device)
@@ -251,8 +253,8 @@ class Server:
                 for p, q in zip(pred, labels):
                     predicted.append(p.item())
                     truth.append(q.item())
-
-        return accuracy_score(truth, predicted)
+                CE_loss += loss_func(outputs, labels) / len(loader)
+        return accuracy_score(truth, predicted), CE_loss
 
     def _aggregate(self, weights):
         """
@@ -298,13 +300,13 @@ class Server:
             for p in tqdm(itertools.permutations(w_ids, N), total=math.factorial(N)):
                 sv_pre = 0.0
                 for cur in range(N):
-                    sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur + 1]]))
+                    _, sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur + 1]]))
                     result[p[cur]] += (sv_cur - sv_pre) / samples
                     sv_pre = sv_cur
         else:
             # calculate sample times
             samples = int(math.sqrt(math.factorial(N))) * 10 if N < 10 else 1000
-            print("Samples %d of %d" % (samples, math.factorial(N)))
+            print("Sample %d of %d" % (samples, math.factorial(N)))
             # for p in itertools.permutations(w_ids, N):
             for r in tqdm(range(samples)):
                 p = np.random.permutation(w_ids)
