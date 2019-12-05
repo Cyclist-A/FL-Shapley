@@ -86,21 +86,21 @@ class Federated:
             # choose clients
 
             # run clients
-            weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
+            weights = {j: c.run_round(current_param) for j, c in enumerate(self.clients)}
 
             # calculate shapley value            
-            self.server._shapley_value_sampling(weights)
+            # self.server._shapley_value_sampling(weights)
 
             # calculate LOO value
-            self.server._leave_one_out(weights)
+            # self.server._leave_one_out(weights)
 
             # aggregate the paramters
             current_param = weights[0]
             for k in current_param:
                 for i in range(1, len(weights)):                
                     current_param[k] += weights[i][k]
-                current_param[k] /= len(weights)
-
+                current_param[k] = torch.div(current_param[k], len(weights))
+            
             # evaluate
             accu = self.server._evaluate(current_param)
             print(f'Round[{i+1}/{rounds}] Test Accu: {accu}')
@@ -152,7 +152,7 @@ class Federated:
         """
         Randomly choose a label, and assign most of its training points to the last client.
         All subset 
-        BUG: if the number of the label's data points is larger then the client's capability,
+        BUG: if the number of the label's data points is larger then the client's capacity,
             it'll raise error
 
         ARGS:
@@ -206,11 +206,20 @@ class Federated:
         """
         # check if capacity is valid
         if len(capacity) != self.C:
-            raise ValueError(f'')
+            raise ValueError(f'The length of capacity(got {len(capacity)}) should be same as the number of clients(got{self.C})')
         elif abs(sum(capacity)) - 1 > 1e-8:
             raise ValueError(f'The sum of the capacity list should be 1, got{sum(capacity)}')
-        raise NotImplementedError
-        return -1
+        
+        split_idx = [int(i * len(dataset)) for i in capacity[:-1]]
+        split_idx.insert(0, 0)
+        split_idx.append(len(dataset))
+
+        idx = [i for i in range(len(dataset))]
+        np.random.shuffle(idx)
+        subset_idx = [idx[split_idx[i]:split_idx[i+1]] for i in range(self.C)]
+
+        return subset_idx
+
 
     def _split_iid(self, dataset):
         """
