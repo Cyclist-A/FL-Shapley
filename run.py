@@ -2,7 +2,7 @@ import torch.multiprocessing as mp
 import torchvision
 
 from net import MyNet
-from federated import Federated
+from federated import FederatedServer
 
 # transform
 transform = torchvision.transforms.Compose([
@@ -14,7 +14,7 @@ transform = torchvision.transforms.Compose([
 NET = MyNet
 TRAINSET = torchvision.datasets.MNIST('../public_set', train=True, transform=transform, download=True)
 TESTSET = torchvision.datasets.MNIST('../public_set', train=False, transform=transform)
-DEVICE_LIST=['cuda:1']
+DEVICE_LIST=['cuda:' + str(i) for i in range(1, 4)]
 
 SERVER_SETTINGS = {
     'warm_up': False,
@@ -27,6 +27,5 @@ SERVER_SETTINGS = {
 
 if __name__ == '__main__':
     mp.set_start_method('spawn')
-    fl = Federated(NET, TRAINSET, TESTSET, DEVICE_LIST, split_method='imba-size')
-    fl.run(server_settings=SERVER_SETTINGS)
-    # fl.run_for_loop()
+    fl = FederatedServer(NET, TRAINSET, TESTSET, devices=DEVICE_LIST, split_method='iid', C=3)
+    fl.run()
