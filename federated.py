@@ -24,9 +24,10 @@ class FederatedServer:
         net: a pytorch neural network class
         trainset: the whole training set, split in i.i.d
         testset: testset to evaluate server's preformance
-        client_settings:
+        net_kwargs: args to create the NN
+        client_settings: settings for training clients
         devices: a list of available devices
-        C: # clients to create
+        clients_num: # clients to create
         split_method: the method to split the dataset. 'iid', 'imba-label', 'imba-size'
         imbalanced_rate: imbalance strength, only works when split method is imba-label
         capacity: capacity for each client, only works when split method is imba-size
@@ -34,21 +35,27 @@ class FederatedServer:
         warm_setting: setting for training whem warm up
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, trainset, testset, client_settings=None, devices=['cpu'], C=3, split_method='iid', imbalanced_rate=0.8, 
-        capacity=[0.1, 0.3, 0.6], warm_up=False, warm_setting=None, random_state=100):
+    def __init__(self, net, trainset, testset, net_kwargs=None, client_settings=None, devices=['cpu'], 
+        clients_num=3, split_method='iid', imbalanced_rate=0.8, capacity=[0.1, 0.3, 0.6], warm_up=False, warm_setting=None, random_state=100):
         # initialize
         self.net = net
-        self.current_params = net().state_dict()
         self.trainset = trainset
         self.testset = testset
+        self.net_kwargs = net_kwargs
         self.devices = [torch.device(d) for d in devices]
-        self.C = C
+        self.clients_num = clients_num
+
+        if net_kwargs:
+            self.current_params = net(**self.net_kwargs).state_dict()
+        else:
+            self.current_params = net().state_dict()
         
         np.random.seed(random_state)
         torch.manual_seed(random_state)
+        torch.cuda.manual_seed_all(random_state)
 
         # split dataset for different clients
-        self.clients = split_dataset(trainset, self.C, split_method, imbalanced_rate, capacity)
+        self.clients = split_dataset(trainset, self.clients_num, split_method, imbalanced_rate, capacity)
 
         # construct clients info
         self.client_settings = {
@@ -87,8 +94,8 @@ class FederatedServer:
             params = self._train_clients(clients_idx)
 
             # valuation
-            # shapley_value(self.net, self.testset, params, self.devices)
-            leave_one_out(self.net, self.testset, params, self.devices[0])
+            shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
+            leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
 
             # update params in server
             self._step(params)
@@ -96,6 +103,7 @@ class FederatedServer:
             # evaluate
             test_accu = self._evaluate()
             print(f"Rounds[{r+1}/{rounds}]: Test Accu: {test_accu}")
+            print('-' * 20)
 
     def _warm_up(self, settings):
         """
@@ -128,7 +136,11 @@ class FederatedServer:
 
         # initialize before training
         device = self.devices[0]
-        net = self.net().to(device)
+        if self.net_kwargs:
+            net = self.net(**self.net_kwargs).to(device)
+        else:
+            net = self.net().to(device)
+
         loader = utils.DataLoader(warm_set, batch_size=default_setting['batch_size'] , shuffle=True)
         criterion = default_setting['loss_func']()
         optimizer = default_setting['optimizer'](net.parameters(), lr=default_setting['lr'])
@@ -177,8 +189,8 @@ class FederatedServer:
             raise ValueError(f'The proportion of chosen clients should lie in (0, 1]. Now is {c}')
         
         # randomly choose clients idx
-        num = max(c * self.C, 1)
-        idx = [i for i in range(self.C)]
+        num = max(c * self.clients_num, 1)
+        idx = [i for i in range(self.clients_num)]
         np.random.shuffle(idx)
         idx = idx[:num]
 
@@ -204,7 +216,7 @@ class FederatedServer:
 
         # start training locally
         print('Starting client processes...')
-        clients_pro = [mp.Process(target=client.run, args=(distri[i], self.net, copy.deepcopy(self.current_params), self.devices[i], channel[i], self.client_settings)) for i in range(len(distri))]
+        clients_pro = [mp.Process(target=client.run, args=(distri[i], self.net, self.net_kwargs, copy.deepcopy(self.current_params), self.devices[i], channel[i], self.client_settings)) for i in range(len(distri))]
         for c in clients_pro:
             c.start()
         
@@ -268,9 +280,12 @@ class FederatedServer:
         """
         # initialize
         device = self.devices[-1]
-        net = self.net().to(device)
+        if self.net_kwargs:
+            net = self.net(**self.net_kwargs).to(device)
+        else:
+            net = self.net().to(device)
         net.load_state_dict(self.current_params)
-        loader = utils.DataLoader(self.testset, batch_size=5000, shuffle=False)
+        loader = utils.DataLoader(self.testset, batch_size=2000, shuffle=False, num_workers=5)
         predicted = []
         truth = []
 

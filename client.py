@@ -8,13 +8,28 @@ import torch.utils.data as utils
 from sklearn.metrics import accuracy_score
 
 
-def run(clients, client_net, params, device, channel, settings):
+def radom_response(params, length, std, channel):
+    """
+    Use TODO to generate 'trained weights' where mean is params from server, 
+    and std is set by user
+    
+    ARGS:
+        params: NN's params, used as mean in distribution
+        length: virtual dataset's length
+        std: distribution's std
+        channel: (channel_in, channel_out): communication channel and controller
+    """
+    pass
+
+
+def run(clients, client_net, net_kwargs, params, device, channel, settings):
     """
     Train the model several epochs locally
 
     AGRS:
         clients: clients' datasets. They are assigned to train on this device
         client_net: NN used to train
+        net_kwargs: kargs for creating NN
         params: NN's parameters
         device: the torch device runs this NN
         channel: (channel_in, channel_out): communication channel and controller
@@ -23,12 +38,15 @@ def run(clients, client_net, params, device, channel, settings):
         None
     """
     # initialize before training
-    net = client_net().to(device)
+    if net_kwargs:
+        net = client_net(**net_kwargs).to(device)
+    else:
+        net = client_net().to(device)
 
     # run for each client
     for idx in clients:
         net.load_state_dict(params)
-        loader = utils.DataLoader(clients[idx], batch_size=settings['batch_size'] , shuffle=True, pin_memory=True)
+        loader = utils.DataLoader(clients[idx], batch_size=settings['batch_size'], shuffle=True, pin_memory=True, num_workers=5)
         criterion = settings['loss_func']()
         optimizer = settings['optimizer'](net.parameters(), lr=settings['lr'])
 
