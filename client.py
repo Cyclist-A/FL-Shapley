@@ -7,122 +7,39 @@ import torch.utils.data as utils
 
 from sklearn.metrics import accuracy_score
 
-class Client:
+
+def run(clients, client_net, params, device, channel, settings):
     """
-        Client instance in federated learning
-        
-        ARGS:
-            idx: clients id, use for screen message
-            net: a pyTorch neural network that used by clients and server
-            channel_in: a Queue connected to server, used to send weights to server
-            channel_out: a Queue connected to server, used to recevice weights from the server
-            dataset: clients dataset
-            device: training device
+    Train the model several epochs locally
+
+    AGRS:
+        clients: clients' datasets. They are assigned to train on this device
+        client_net: NN used to train
+        params: NN's parameters
+        device: the torch device runs this NN
+        channel: (channel_in, channel_out): communication channel and controller
+        settings: training setttings
+    RETURN:
+        None
     """
-    def __init__(self, idx, net, channel_in, channel_out, dataset, device='cpu'):
-        self.idx = idx
-        self.net = net
-        self.channel_in = channel_in
-        self.channel_out = channel_out
-        self.dataset = dataset
-        self.device = torch.device(device)
+    # initialize before training
+    net = client_net().to(device)
 
-        # settings
-        self.settings = {
-            'epoch': 3, 
-            'lr': 0.01,
-            'batch_size': 128,
-            'loss_func': nn.CrossEntropyLoss,
-            'optimizer': optim.Adam,
-        }
+    # run for each client
+    for idx in clients:
+        net.load_state_dict(params)
+        loader = utils.DataLoader(clients[idx], batch_size=settings['batch_size'] , shuffle=True, pin_memory=True)
+        criterion = settings['loss_func']()
+        optimizer = settings['optimizer'](net.parameters(), lr=settings['lr'])
 
-    def run(self, settings=None):
-        """
-        Run the client for local training
-
-        ARGS:
-            settings: custom settings for local training
-        RETURN:
-            None
-        """
-        # customize settings
-        if settings:
-            for k in settings:
-                self.settings[k] = settings[k]
-
-        while True:
-            # wait commands from server
-            params = self.channel_out.get()
-
-            # finished training
-            if type(params) is int:
-                break
-
-            # clone and load params
-            self.net.load_state_dict(params)
-            
-            # train local model
-            self._train()
-
-            # update to server
-            message = {}
-            for k in self.net.state_dict():
-                message[k] = self.net.state_dict()[k].clone().detach().cpu()
-            self.channel_in.put(message)
-            self.channel_in.put(len(self.dataset))  # use for aggregation
-        
-        print(f'Client {params} exited.')
-        sys.stdout.flush()
-
-    def run_round(self, params, settings=None):
-        """
-        Run clients for a round, use for for-loop function
-
-        ARGS:
-            params: the state_dict from server
-            settings: settings for local training process
-        RETURN:
-            d_weight(dict): 
-        """
-        # customize settings
-        if settings:
-            for k in settings:
-                self.settings[k] = settings[k]
-
-        # load params
-        self.net.load_state_dict(params)
-        
-        # train local model
-        self._train()
-
-        # calcualte delta weights (no need)
-        # d_weights = self._cal_d_weights(params)
-
-        return self.net.state_dict()
-
-    def _train(self):
-        """
-        Train the model several epochs locally
-        
-        AGRS:
-            None
-        RETURN:
-            None
-        """
-        
-        # initialize before training
-        self.net.to(self.device)
-        loader = utils.DataLoader(self.dataset, batch_size=self.settings['batch_size'] , shuffle=True)
-        criterion = self.settings['loss_func']()
-        optimizer = self.settings['optimizer'](self.net.parameters(), lr=self.settings['lr'])
-
-        for epoch in range(self.settings['epoch']):
-            self.net.train()
+        # start training
+        for epoch in range(settings['epoch']):
+            net.train()
             epoch_loss = 0
 
             for i, data in enumerate(loader, 1):
-                inputs, labels = data[0].to(self.device), data[1].to(self.device)
-                outputs = self.net(inputs)
+                inputs, labels = data[0].to(device), data[1].to(device)
+                outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
                 # updata
@@ -133,31 +50,48 @@ class Client:
                 epoch_loss += loss.item()
             
             # evaluate
-            train_accu = self._evaluate()
-            print(f'Client {self.idx}: Epoch[{epoch + 1}/{self.settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
+            train_accu = _evaluate(net, clients[idx], device)
+            print(f'Client {idx}: Epoch[{epoch + 1}/{settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
             sys.stdout.flush()
-
-    def _evaluate(self):
-        """
-        Evaluate current net in the client
         
-        ARGS:
-            None
-        RETURN:
-            accuracy_score(float): the 
-        """
-        self.net.eval()
-        loader = utils.DataLoader(self.dataset, batch_size=1000, shuffle=False)
-        predicted = []
-        truth = []
+        # finished, send params back to server
+        trained_params = net.state_dict()
+        message = {
+            'id': idx,
+            'params': {layer: trained_params[layer].clone().detach().cpu() for layer in trained_params},
+            'length': len(clients[idx])
+        }
+        channel[1].put(message)
+    
+    # wait for exit signal from server
+    channel[0].get()
 
+def _evaluate(net, dataset, device):
+    """
+    Evaluate current net in the server
+
+    ARGS:
+        net: NN for evaluation
+        dataset: dataset for evaluation
+        device: device to run the NN
+    RETURN:
+        accuracy_score: evalutaion result
+    """
+    # initialize
+    net.to(device)
+    loader = utils.DataLoader(dataset, batch_size=5000, shuffle=False)
+    predicted = []
+    truth = []
+
+    net.eval()
+    with torch.no_grad():
         for data in loader:
-            inputs, labels = data[0].to(self.device), data[1].to(self.device)
-            outputs = self.net(inputs)
+            inputs, labels = data[0].to(device), data[1].to(device)
+            outputs = net(inputs)
             _, pred = torch.max(outputs.data, 1)
-            
+
             for p, q in zip(pred, labels):
                 predicted.append(p.item())
                 truth.append(q.item())
-        
-        return accuracy_score(truth, predicted)
+
+    return accuracy_score(truth, predicted)

@@ -1,230 +1,288 @@
-from server import Server
-from client import Client
-
-import numpy as np
 import math
-import torch.multiprocessing as mp
+import copy
+import numpy as np
 
 import torch
+import torch.nn as nn
+import torch.optim as optim
 import torch.utils.data as utils
+import torch.multiprocessing as mp
 
-class Federated:
+from sklearn.metrics import accuracy_score
+
+import client
+from splitDataset import split_dataset
+from valuation import shapley_value, leave_one_out
+
+class FederatedServer:
     """
     A Framework for federated learning. Provide a for-loop version and a multiprocessing
-    version. The multiprocessing version can only run on LinuxOS. For multiprocessing, 
-    it average clients to every 
+    version. The multiprocessing version can only run on LinuxOS. For multiprocessing,
+    it average clients to every GPU
     
     ARGS:
-        net: a pytorch neural network class 
+        net: a pytorch neural network class
         trainset: the whole training set, split in i.i.d
         testset: testset to evaluate server's preformance
+        client_settings:
         devices: a list of available devices
         C: # clients to create
         split_method: the method to split the dataset. 'iid', 'imba-label', 'imba-size'
         imbalanced_rate: imbalance strength, only works when split method is imba-label
         capacity: capacity for each client, only works when split method is imba-size
-        warm_rate: the proportion of trainset owned by server, only works when server needs warm up
+        warm_up: whether to warm up the server
+        warm_setting: setting for training whem warm up
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, trainset, testset, devices='cpu', C=3, split_method='iid', imbalanced_rate=0.8, 
-        capacity=[0.1, 0.3, 0.6], warm_rate=0.01, random_state=100):
-        # construct channel to connect server and client
+    def __init__(self, net, trainset, testset, client_settings=None, devices=['cpu'], C=3, split_method='iid', imbalanced_rate=0.8, 
+        capacity=[0.1, 0.3, 0.6], warm_up=False, warm_setting=None, random_state=100):
+        # initialize
+        self.net = net
+        self.current_params = net().state_dict()
+        self.trainset = trainset
+        self.testset = testset
+        self.devices = [torch.device(d) for d in devices]
         self.C = C
-        channel_server_in = [mp.Queue() for i in range(C)]
-        channel_server_out = [mp.Queue() for i in range(C)]
+        
+        np.random.seed(random_state)
+        torch.manual_seed(random_state)
 
         # split dataset for different clients
-        subsets, warm_set = self._split_dataset(trainset, split_method, imbalanced_rate, capacity, warm_rate, random_state)
+        self.clients = split_dataset(trainset, self.C, split_method, imbalanced_rate, capacity)
 
-        # create a server and clients
-        self.server = Server(net(), channel_server_in, channel_server_out, testset, warm_set, device=devices[0])
-        self.clients = [Client(i, net(), channel_server_out[i], channel_server_in[i], subsets[i], devices[i%len(devices)]) for i in range(C)]
+        # construct clients info
+        self.client_settings = {
+            'epoch': 3,
+            'lr': 0.01,
+            'batch_size': 128,
+            'loss_func': nn.CrossEntropyLoss,
+            'optimizer': optim.Adam
+        }
+        if client_settings:
+            for k in client_settings:
+                if k in self.client_settings:
+                    self.client_settings[k] = client_settings[k]
+                else:
+                    raise RuntimeError('Wrong settings for client, no such settings')
 
-    def run(self, server_settings={}, client_settings=None):
+        # warm up the server
+        if warm_up:
+            self._warm_up(warm_setting)
+
+    def run(self, rounds=3, c=1):
         """
-        Fork a process for each clients and the server
-        Run their main function
-        
+        Run federated for several rounds
+
         ARGS:
-            server_settings(optional): settings for running the server
-            client_settings(optional): settings for running the client
+            rounds: the number of rounds to run federated learning
+            c: the proportion of chosen clients in each rounds
         RETURN:
             None
         """
-        # start server
-        print('Starting server process...')
-        server_pro = mp.Process(target=self.server.run, kwargs=server_settings)
-        server_pro.start()
+        for r in range(rounds):
+            # choose clients
+            clients_idx = self._choose_clients(c)
 
-        # assign processes to clients
+            # train on clients
+            params = self._train_clients(clients_idx)
+
+            # valuation
+            # shapley_value(self.net, self.testset, params, self.devices)
+            leave_one_out(self.net, self.testset, params, self.devices[0])
+
+            # update params in server
+            self._step(params)
+            
+            # evaluate
+            test_accu = self._evaluate()
+            print(f"Rounds[{r+1}/{rounds}]: Test Accu: {test_accu}")
+
+    def _warm_up(self, settings):
+        """
+        Train server before starting client processes
+
+        ARGS:
+            settings: customed settings to warm up
+        RETURN:
+            None
+        """
+        default_setting = {
+            'warm_rate': 0.01,
+            'epoch': 5, 
+            'lr': 0.01,
+            'batch_size': 128,
+            'loss_func': nn.CrossEntropyLoss,
+            'optimizer': optim.Adam,
+        }
+
+        # grab settings from
+        if settings:
+            for k in settings:
+                default_setting[k] = settings[k]
+
+        # create warm set
+        idx = [i for i in range(len(self.trainset))]
+        np.random.shuffle(idx)
+        warm_idx = idx[:int(len(self.trainset) * default_setting['warm_rate'])]
+        warm_set = utils.Subset(self.trainset, warm_idx)
+
+        # initialize before training
+        device = self.devices[0]
+        net = self.net().to(device)
+        loader = utils.DataLoader(warm_set, batch_size=default_setting['batch_size'] , shuffle=True)
+        criterion = default_setting['loss_func']()
+        optimizer = default_setting['optimizer'](net.parameters(), lr=default_setting['lr'])
+
+        print('Start heating server...')
+
+        for epoch in range(default_setting['epoch']):
+            net.train()
+            epoch_loss = 0
+
+            for i, data in enumerate(loader, 1):
+                inputs, labels = data[0].to(device), data[1].to(device)
+                outputs = net(inputs)
+                loss = criterion(outputs, labels)
+
+                # updata
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item()
+            
+            # evaluate
+            test_accu = self._evaluate()
+            print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu: {test_accu}')
+        
+        # store the training result
+        params = net.state_dict()
+        self.current_params = {}
+        for k in params:
+            self.current_params[k] = params[k].clone().detach().cpu()
+
+        print('Finished heating server.')       
+    
+    def _choose_clients(self, c):
+        """
+        Randomly choose some clients to update weight
+        
+        ARGS:
+            c: the proportion of chosen clients, should lie in (0, 1]
+        RETURN:
+            idx(list): client id which are chosen
+        """
+        # select a proportion of clients
+        if c > 1 or c <= 0:
+            raise ValueError(f'The proportion of chosen clients should lie in (0, 1]. Now is {c}')
+        
+        # randomly choose clients idx
+        num = max(c * self.C, 1)
+        idx = [i for i in range(self.C)]
+        np.random.shuffle(idx)
+        idx = idx[:num]
+
+        return idx
+
+    def _train_clients(self, clients_idx):
+        """
+        Train clietns for a round
+        
+        ARGS:
+            clients_idx: chosen clients id
+        RETURN:
+            params(dict): client_id: params; parameters from each client's training result
+        """
+        # distribute missions
+        distri = [{} for i in range(min(len(self.devices), len(clients_idx)))]
+        for i, idx in enumerate(clients_idx):
+            distri[i%len(distri)][idx] = self.clients[idx]
+
+        # build channel for every process
+        channel_out = mp.Queue()
+        channel = [(mp.Queue(), channel_out) for _ in distri]
+
+        # start training locally
         print('Starting client processes...')
-        clients_pro = [mp.Process(target=c.run, args=(client_settings, )) for c in self.clients]
+        clients_pro = [mp.Process(target=client.run, args=(distri[i], self.net, copy.deepcopy(self.current_params), self.devices[i], channel[i], self.client_settings)) for i in range(len(distri))]
         for c in clients_pro:
             c.start()
         
-        # wait until all finished
+        # collect results from clients pro
+        params = {}
+        length = {}
+        while len(params) < len(clients_idx):
+            message = channel_out.get()
+            params[message['id']] = message['params']
+            length[message['id']] = message['length']
+
+        # get all params, kill the clients
+        for c in channel:
+            c[0].put(-1)
+
+        # make sure all clients have finished
         for c in clients_pro:
             c.join()
-        print('All clients have exited')
 
-        server_pro.join()
-        print('Server stopped working')
-    
-    def run_for_loop(self, rounds=3):
+        # scale the params
+        total = sum(length.values())
+        for idx in params:
+            for layer in params[idx]:
+                params[idx][layer] = torch.div(params[idx][layer], total / length[idx])
+
+        return params
+
+    def _step(self, params):
         """
-        Use for loop to run FL instead of multiprocessing
-        In this situation, this class works as a server
-        
+        Aggregate delta parameters from different clients.
+        Use aggregation resutls to update the model
+
+        ARGS:
+            params: all parameters from clients
+            length: client datasets' lenght
         RETURN:
             None
         """
+        idx = list(params.keys())
+
+        # aggregate
+        layers = params[idx[0]].keys()
+        aggr_params = {}
+
+        for l in layers:
+            aggr_params[l] = params[idx[0]][l].clone().detach()
+            for i in idx[1:]:
+                aggr_params[l] += params[i][l]
+
+        # update net's params
+        self.current_params = aggr_params
+
+    def _evaluate(self):
+        """
+        Evaluate current net in the server
+
+        ARGS:
+            None
+        RETURN:
+            accuracy_score: evalutaion result
+        """
         # initialize
-        # self.server._warm_up(None)
-        current_param = self.server.net.state_dict()
+        device = self.devices[-1]
+        net = self.net().to(device)
+        net.load_state_dict(self.current_params)
+        loader = utils.DataLoader(self.testset, batch_size=5000, shuffle=False)
+        predicted = []
+        truth = []
 
-        for i in range(rounds):
-            # choose clients
+        net.eval()
+        with torch.no_grad():
+            for data in loader:
+                inputs, labels = data[0].to(device), data[1].to(device)
+                outputs = net(inputs)
+                _, pred = torch.max(outputs.data, 1)
 
-            # run clients
-            weights = {i: c.run_round(current_param) for i, c in enumerate(self.clients)}
+                for p, q in zip(pred, labels):
+                    predicted.append(p.item())
+                    truth.append(q.item())
 
-            # calculate shapley value            
-            self.server._shapley_value_sampling(weights)
-
-            # calculate LOO value
-            self.server._leave_one_out(weights)
-
-            # aggregate the paramters
-            current_param = weights[0]
-            for k in current_param:
-                for i in range(1, len(weights)):                
-                    current_param[k] += weights[i][k]
-                current_param[k] /= len(weights)
-
-            # evaluate
-            accu = self.server._evaluate(current_param)
-            print(f'Round[{i+1}/{rounds}] Test Accu: {accu}')
-
-
-    def _split_dataset(self, dataset, split_method, imbalanced_rate, capacity, warm_rate, random_state):
-        """
-        Split dataset by assigned different datasets for each clients
-        
-        ARGS:
-            dataset: dataset to be splited
-            split_method: whether to sample in non-iid way
-            imbalanced_rate: imbalance strength, only works when split method is imba-label
-            capacity: capacity for each client, only works when split method is imba-size
-            warm_rate: the proportion of trainset owned by server, only works when server needs warm up 
-            ramdom_state: control random seed
-        RETURN:
-            subsets(list): A list of datasets for clients
-            warm_set(utils.dataset): Use for warm up training in server
-        """
-        # set random state
-        np.random.seed(random_state)      
-
-        # split by different methods
-        if split_method == 'imba-label':
-            subset_idx = self._split_imba_label(dataset, imbalanced_rate)
-        
-        elif split_method == 'imba-size':
-            subset_idx = self._split_imba_size(dataset, capacity)
-
-        elif split_method == 'iid':
-            subset_idx = self._split_iid(dataset)
-
-        else:
-            raise ValueError(f"Split method can only be 'iid', 'imba-label' or 'imba-size'. \
-                Your input is {split_method} ")
-
-        subsets = [utils.Subset(dataset, i) for i in subset_idx]
-
-        # create warm set
-        idx = [i for i in range(len(dataset))]
-        np.random.shuffle(idx)
-        warm_idx = idx[:int(len(dataset) * warm_rate)]
-        warm_set = utils.Subset(dataset, warm_idx)
-
-        return subsets, warm_set     
-
-    def _split_imba_label(self, dataset, imbalanced_rate):
-        """
-        Randomly choose a label, and assign most of its training points to the last client.
-        All subset 
-        BUG: if the number of the label's data points is larger then the client's capability,
-            it'll raise error
-
-        ARGS:
-            dataset: the dataset need to be splited
-            imbalanced_rate: the proportion of 
-        RETURN:
-            subset_idx(list): a list contains each subset data's index
-        """
-        subset_idx = [[] for i in range(self.C)]
-
-        # randomly choose a label to become non_iid
-        label = dataset[np.random.randint(len(dataset))][1]
-
-        # split idx by label (whether chosen)
-        normal_idx = []
-        label_idx = []
-        for i, data in enumerate(dataset):
-            if data[1] == label:
-                label_idx.append(i)
-            else:
-                normal_idx.append(i)
-        np.random.shuffle(normal_idx)
-        np.random.shuffle(label_idx)
-
-        # construct subset list, last clients will have most choosen label
-        # split data by split point
-        label_split_point = int(len(label_idx) * imbalanced_rate)
-        normal_split_point = int(len(dataset) / self.C) - label_split_point
-
-        # bug detection
-        if normal_split_point <= 0:
-            raise RuntimeError("Overloaded. The number of data points isover than client's capacity.")
-
-        subset_idx[-1] += label_idx[:label_split_point]
-        subset_idx[-1] += normal_idx[:normal_split_point]
-
-        # remain index for other clients
-        remain_idx = normal_idx[normal_split_point:] + label_idx[label_split_point:]
-        for i, idx in enumerate(remain_idx):
-            subset_idx[i % (self.C-1)].append(idx)
-
-        return subset_idx
-
-    def _split_imba_size(self, dataset, capacity):
-        """
-        ARGS:
-            dataset: the dataset need to be splited
-            capacity: capacity for each client, only works when split method is imba-size
-        RETURN:
-            subset_idx(list): a list contains each subset data's index
-        """
-        # check if capacity is valid
-        if len(capacity) != self.C:
-            raise ValueError(f'')
-        elif abs(sum(capacity)) - 1 > 1e-8:
-            raise ValueError(f'The sum of the capacity list should be 1, got{sum(capacity)}')
-        raise NotImplementedError
-        return -1
-
-    def _split_iid(self, dataset):
-        """
-        Randomly split dataset in i.i.d
-        
-        ARGS:
-            dataset: the dataset need to be splited
-        RETURN:
-            subset_idx(list): a list contains each subset data's index
-        """
-        subset_idx = [[] for i in range(self.C)]
-        tmp = [i for i in range(len(dataset))]
-        np.random.shuffle(tmp)
-        for i, t in enumerate(tmp):
-            subset_idx[i%self.C].append(t)
-        
-        return subset_idx
+        return accuracy_score(truth, predicted)

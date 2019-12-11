@@ -67,17 +67,17 @@ class Server:
             client_ids = self._choose_clients(c)
             
             # get the response from chosen clients
-            params, length = self._params_from_client(client_ids)
+            params = self._params_from_client(client_ids)
 
             # calcualte shapley value
             self._shapley_value_sampling(params)
             # self._leave_one_out(params)
 
             # aggregate the parameters
-            self._step(params, length)
+            self._step(params)
 
             # evaluate
-            _, test_accu = self._evaluate()
+            test_accu = self._evaluate()
             print(f'Round[{r+1}/{rounds}] Test Accu: {test_accu}')
             sys.stdout.flush()
         
@@ -139,8 +139,8 @@ class Server:
                 epoch_loss += loss.item()
             
             # evaluate
-            _, test_accu = self._evaluate()
-            print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu:{test_accu}')
+            test_accu = self._evaluate()
+            print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu: {test_accu}')
             sys.stdout.flush()
         
         # store the training result
@@ -176,8 +176,7 @@ class Server:
         ARGS:
             client_id: the dict of chosen clients
         RETURN:
-            params(dict): parameters from all chosen clients
-            length(dict): the length of chosen client's datasets
+            params(dict): parameters from all chosen clients after scaling
         """
         # send params to client by queue
         print('Sending parameters to chosen clients...')
@@ -195,9 +194,16 @@ class Server:
             params[idx] = self.channels_out[idx].get()
             length[idx] = self.channels_out[idx].get()
 
-        return params, length
+        # Scale params by client dataset's size
+        # calculate weight for each client's parameters
+        total = sum(length.values())
+        for idx in client_ids:
+            for layer in params[idx]:
+                params[idx][layer] = torch.div(params[idx][layer], total/length[idx])
 
-    def _step(self, params, length):
+        return params
+
+    def _step(self, params):
         """
         Aggregate delta parameters from different clients.
         Use aggregation resutls to update the model
@@ -210,21 +216,14 @@ class Server:
         """
         idx = list(params.keys())
 
-        # calculate weight for each client's parameters
-        total = 0.0
-        for i in idx:
-            total += length[i]
-        for i in idx:
-            length[i] = length[i] / total
-
         # aggregate
         layers = params[idx[0]].keys()
         aggr_params = {}
 
         for l in layers:
-            aggr_params[l] = params[idx[0]][l].clone().detach().cpu().to(torch.float)
+            aggr_params[l] = params[idx[0]][l].clone().detach().cpu()
             for i in idx[1:]:
-                aggr_params[l] += length[i] * params[i][l]
+                aggr_params[l] += params[i][l]
 
         # update net's params
         self.current_params = aggr_params
@@ -252,20 +251,17 @@ class Server:
         self.net.load_state_dict(params)
         self.net.eval()
 
-        CE_loss = 0.0
-        loss_func = nn.CrossEntropyLoss()
         with torch.no_grad():
             for data in loader:
                 inputs, labels = data[0].to(self.device), data[1].to(self.device)
-                # outputs = model(inputs)
                 outputs = self.net(inputs)
                 _, pred = torch.max(outputs.data, 1)
 
                 for p, q in zip(pred, labels):
                     predicted.append(p.item())
                     truth.append(q.item())
-                CE_loss += loss_func(outputs, labels) / len(loader)
-        return accuracy_score(truth, predicted), CE_loss
+
+        return accuracy_score(truth, predicted)
 
     def _aggregate(self, weights):
         """
@@ -311,15 +307,15 @@ class Server:
             for p in tqdm(itertools.permutations(w_ids, N), total=math.factorial(N)):
                 sv_pre = 0.0
                 for cur in range(N):
-                    _, sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur + 1]]))
+                    sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur + 1]]))
                     result[p[cur]] += (sv_cur - sv_pre) / samples
                     sv_pre = sv_cur
         else:
             # calculate sample times
             samples = int(math.sqrt(math.factorial(N))) * 10 if N < 10 else 1000
-            print("Sample %d of %d" % (samples, math.factorial(N)))
+            print("Samples %d of %d" % (samples, math.factorial(N)))
             # for p in itertools.permutations(w_ids, N):
-            for r in tqdm(range(samples)):
+            for r in tqdm(range(samples), desc='Calculating SV...'):
                 p = np.random.permutation(w_ids)
                 # print("sampling: ", p)
                 sv_pre = 0.0
