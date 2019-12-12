@@ -15,12 +15,13 @@ import numpy as np
 from sklearn.metrics import accuracy_score
 
 
-def leave_one_out(net, dataset, weights, device):
+def leave_one_out(net, net_kwargs, dataset, weights, device):
     """
     Calculate Leave-One-Out(LOO) evaluation
 
     ARGS:
         net: trained NN
+        net_kwargs: kwargs for creating net
         dataset: evaluation dataset
         weights: weights uploaded from clients
     RETURN:
@@ -29,7 +30,11 @@ def leave_one_out(net, dataset, weights, device):
     w_ids = weights.keys()
     result = defaultdict(float)
     
-    net = net()
+    if net_kwargs:
+        net = net(**net_kwargs)
+    else:
+        net = net()
+
     net.load_state_dict(_aggregate(weights))
     loader = utils.DataLoader(dataset, batch_size=5000, shuffle=False, pin_memory=True)
     global_result = _evaluate(net, loader, device)
@@ -44,11 +49,12 @@ def leave_one_out(net, dataset, weights, device):
         print("%d worker's LOO value: %.6f" % (key, result[key]))
 
 
-def shapley_value(net, dataset, weights, devices):
+def shapley_value(net, net_kwargs, dataset, weights, devices):
     """
     Implement shapley value using multiprocessing
     ARGS:
         net: net for evaluation
+        net_kwargs: kwargs for creating net
         dataset: dataset for evaluation
         weights: weights of all chosen clients
         devices: available devices list
@@ -71,7 +77,7 @@ def shapley_value(net, dataset, weights, devices):
 
     # assign evaluation tast to every device
     channel_out = mp.Queue()
-    evaluation_pro = [mp.Process(target=_shapley_value, args=(net, dataset, weights, tasks[i], samples, devices[i], channel_out)) for i in range(len(tasks))]
+    evaluation_pro = [mp.Process(target=_shapley_value, args=(net, net_kwargs, dataset, weights, tasks[i], samples, devices[i], channel_out)) for i in range(len(tasks))]
     
     for p in evaluation_pro:
         p.start()
@@ -87,16 +93,17 @@ def shapley_value(net, dataset, weights, devices):
     for p in evaluation_pro:
         p.join()
 
-    for k in sv.keys():
+    for k in sorted(list(sv.keys())):
         print(f"Client {k}'s SV is: {sv[k]}")
 
 
-def _shapley_value(net, dataset, weights, permutations, samples, device, channel_out):
+def _shapley_value(net, net_kwargs, dataset, weights, permutations, samples, device, channel_out):
     """
     Evaluate multi differernt weights of a NN
 
     ARGS:
         net: training NN
+        net_kwargs: kwargs for creating net
         dataset: evaluation dataset
         weights: weight dict from chosn clients
         permutation: the permutation assgined to calculate SV
@@ -106,10 +113,13 @@ def _shapley_value(net, dataset, weights, permutations, samples, device, channel
     RETURN:
         None
     """
-    net = net()
+    if net_kwargs:
+        net = net(**net_kwargs)
+    else:
+        net = net()
     res = defaultdict(float)
     # ping loader to RAM
-    loader = utils.DataLoader(dataset, batch_size=5000, shuffle=False, pin_memory=True)
+    loader = utils.DataLoader(dataset, batch_size=2000, shuffle=False, pin_memory=True, num_workers=5)
 
     # modified from original SV calculation
     for p in permutations:
