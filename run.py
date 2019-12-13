@@ -30,19 +30,19 @@ parser.add_argument('--num-rounds', type=int, default=1, metavar='N',
 
 
 # transformations
-TRAINSFORM_MINST = transforms.Compose([
+TRANSFORM_MINST = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.13066062, ), (0.30810776, ))
 ])
 
-TRAINSFORM_CIFA10_TRAIN = transforms.Compose([
+TRANSFORM_CIFA10_TRAIN = transforms.Compose([
     transforms.RandomCrop(32, padding=4),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
-TRAINSFORM_CIFA10_TEST = transforms.Compose([
+TRANSFORM_CIFA10_TEST = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
@@ -57,8 +57,8 @@ def main(args):
         net = MyNet
         net_kwargs = None
         dataset = torchvision.datasets.MNIST
-        transforms_train = TRAINSFORM_MINST
-        transforms_test = TRAINSFORM_MINST
+        transforms_train = TRANSFORM_MINST
+        transforms_test = TRANSFORM_MINST
     elif args.dataset == 'cifar-10':
         net = ResNet
         net_kwargs = {
@@ -66,8 +66,8 @@ def main(args):
             'num_classes': args.num_classes
         }
         dataset = torchvision.datasets.CIFAR10
-        transforms_train = TRAINSFORM_CIFA10_TRAIN
-        transforms_test = TRAINSFORM_CIFA10_TEST
+        transforms_train = TRANSFORM_CIFA10_TRAIN
+        transforms_test = TRANSFORM_CIFA10_TEST
     else:
         raise ValueError('No such dataset. Only have mnist and cifa-10.')
 
