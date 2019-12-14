@@ -9,7 +9,8 @@ from net import MyNet
 from models.resnet import ResNet
 from federated import FederatedServer
 
-DATASET = 'cifa-10'
+ROUNDS = 3
+DATASET = 'mnist'
 
 # transformations
 TRAINSFORM_MINST = transforms.Compose([
@@ -36,7 +37,10 @@ SERVER_SETTINGS = {
     }
 }
 
-# CLIENT_SETTINGS = {}
+CLIENT_SETTINGS = {
+    'epoch': 3,
+    'batch_size': 512
+}
 
 if __name__ == '__main__':
     # some settings
@@ -62,8 +66,8 @@ if __name__ == '__main__':
 
     trainset = dataset('../public_set', train=True, transform=transforms_train, download=True)
     testset = dataset('../public_set', train=False, transform=transforms_test)
-    DEVICE_LIST = ['cuda:' + str(i) for i in range(1, 4)]
+    DEVICE_LIST = ['cuda:' + str(i) for i in range(4)]
 
     # run federated
-    fl = FederatedServer(net, trainset, testset, net_kwargs=net_kwargs, devices=DEVICE_LIST, split_method='iid', clients_num=3)
-    fl.run(rounds=1)
+    fl = FederatedServer(net, trainset, testset, net_kwargs=net_kwargs, devices=DEVICE_LIST, split_method='iid', clients_num=10, client_settings=CLIENT_SETTINGS)
+    fl.run(rounds=ROUNDS)

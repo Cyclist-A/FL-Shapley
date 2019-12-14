@@ -27,29 +27,38 @@ class FederatedServer:
         net_kwargs: args to create the NN
         client_settings: settings for training clients
         devices: a list of available devices
+        cal_sv: whether to calculate Shapley Value
+        cal_loo: whether to calculate LOO
         clients_num: # clients to create
         split_method: the method to split the dataset. 'iid', 'imba-label', 'imba-size'
         imbalanced_rate: imbalance strength, only works when split method is imba-label
         capacity: capacity for each client, only works when split method is imba-size
         warm_up: whether to warm up the server
         warm_setting: setting for training whem warm up
+        random_response: whether to create a client with random weights' response
+        std: .Only works when random response is true
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, trainset, testset, net_kwargs=None, client_settings=None, devices=['cpu'], 
-        clients_num=3, split_method='iid', imbalanced_rate=0.8, capacity=[0.1, 0.3, 0.6], warm_up=False, warm_setting=None, random_state=100):
+    def __init__(self, net, trainset, testset, net_kwargs=None, client_settings=None, devices=['cpu'], cal_sv = True, cal_loo = True,
+        clients_num=3, split_method='iid', imbalanced_rate=0.8, capacity=[0.1, 0.3, 0.6], warm_up=False, warm_setting=None, random_response=False, std=0.5, random_state=100):
         # initialize
         self.net = net
         self.trainset = trainset
         self.testset = testset
         self.net_kwargs = net_kwargs
         self.devices = [torch.device(d) for d in devices]
+        self.cal_sv = cal_sv
+        self.cal_loo = cal_loo
         self.clients_num = clients_num
+        self.random_response = random_response
+        self.std = 0.5
 
         if net_kwargs:
             self.current_params = net(**self.net_kwargs).state_dict()
         else:
             self.current_params = net().state_dict()
-        
+
+        # fix random state (BUG cannot reproduce)
         np.random.seed(random_state)
         torch.manual_seed(random_state)
         torch.cuda.manual_seed_all(random_state)
@@ -63,8 +72,10 @@ class FederatedServer:
             'lr': 0.01,
             'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
-            'optimizer': optim.Adam
+            'optimizer': optim.Adam,
+            'verbose': True
         }
+
         if client_settings:
             for k in client_settings:
                 if k in self.client_settings:
@@ -94,8 +105,10 @@ class FederatedServer:
             params = self._train_clients(clients_idx)
 
             # valuation
-            shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
-            leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
+            if self.cal_sv:
+                shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
+            if self.cal_loo:
+                leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
 
             # update params in server
             self._step(params)
@@ -235,6 +248,12 @@ class FederatedServer:
         # make sure all clients have finished
         for c in clients_pro:
             c.join()
+
+         # add random response in every round
+        if self.random_response:
+            params['random'] = client.random_response(copy.deepcopy(self.current_params), self.std)
+            # use ave length as random's length
+            length['random'] = sum(length.values()) / len(clients_idx)
 
         # scale the params
         total = sum(length.values())
