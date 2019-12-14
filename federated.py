@@ -229,7 +229,12 @@ class FederatedServer:
 
         # start training locally
         print('Starting client processes...')
-        clients_pro = [mp.Process(target=client.run, args=(distri[i], self.net, self.net_kwargs, copy.deepcopy(self.current_params), self.devices[i], channel[i], self.client_settings)) for i in range(len(distri))]
+        clients_pro = [mp.Process(target=client.run, args=(distri[i],
+                                                           self.net,
+                                                           self.net_kwargs,
+                                                           copy.deepcopy(self.current_params),
+                                                           self.devices[i], channel[i], self.client_settings))
+                       for i in range(len(distri))]
         for c in clients_pro:
             c.start()
         

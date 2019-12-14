@@ -75,9 +75,11 @@ def shapley_value(net, net_kwargs, dataset, weights, devices):
         for i in range(samples):
             tasks[i%len(devices)].append(np.random.permutation(w_ids))
 
-    # assign evaluation tast to every device
+    # assign evaluation task to every device
     channel_out = mp.Queue()
-    evaluation_pro = [mp.Process(target=_shapley_value, args=(net, net_kwargs, dataset, weights, tasks[i], samples, devices[i], channel_out)) for i in range(len(tasks))]
+    evaluation_pro = [mp.Process(target=_shapley_value,
+                                 args=(net, net_kwargs, dataset, weights, tasks[i], samples, devices[i], channel_out))
+                      for i in range(len(tasks))]
     
     for p in evaluation_pro:
         p.start()
