@@ -1,5 +1,5 @@
 """
-BUG: Result cannot be reprocduce
+BUG: Result cannot be reproduce
 """
 import torchvision
 import torchvision.transforms as transforms
