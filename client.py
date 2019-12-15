@@ -4,22 +4,29 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as utils
+import torch.distributions as distributions
 
 from sklearn.metrics import accuracy_score
 
 
-def radom_response(params, length, std, channel):
+def random_response(params, std):
     """
-    Use TODO to generate 'trained weights' where mean is params from server, 
+    Use Normal distribution to generate 'trained weights' where mean is params from server, 
     and std is set by user
     
     ARGS:
         params: NN's params, used as mean in distribution
-        length: virtual dataset's length
         std: distribution's std
-        channel: (channel_in, channel_out): communication channel and controller
+    RETURN:
+        random_weigt(dict): a state dict of NN gerenated randomly according to params from server
     """
-    pass
+    # generate random response according to params from server
+    random_weight = {}
+    for layer in params:
+        normal = distributions.normal.Normal(params[layer].to(torch.float), std)
+        random_weight[layer] = normal.sample()
+    
+    return random_weight
 
 
 def run(clients, client_net, net_kwargs, params, device, channel, settings):
@@ -69,7 +76,8 @@ def run(clients, client_net, net_kwargs, params, device, channel, settings):
             
             # evaluate
             train_accu = _evaluate(net, clients[idx], device)
-            print(f'Client {idx}: Epoch[{epoch + 1}/{settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
+            if settings['verbose']:
+                print(f'Client {idx}: Epoch[{epoch + 1}/{settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
             sys.stdout.flush()
         
         # finished, send params back to server
