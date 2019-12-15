@@ -9,6 +9,8 @@ from net import MyNet
 from models.resnet import ResNet
 from federated import FederatedServer
 
+
+DATASET = 'cifar-10'
 # transformations
 TRANSFORM_MNIST = transforms.Compose([
     transforms.ToTensor(),
@@ -39,21 +41,21 @@ CLIENT_SETTINGS = {
     'batch_size': 512
 }
 
-def main(args):
+if __name__ == '__main__':
     # some settings
     mp.set_start_method('spawn')
 
-    if args.dataset == 'mnist':
+    if DATASET == 'mnist':
         net = MyNet
         net_kwargs = None
         dataset = torchvision.datasets.MNIST
         transforms_train = TRANSFORM_MNIST
         transforms_test = TRANSFORM_MNIST
-    elif args.dataset == 'cifar-10':
+    elif DATASET == 'cifar-10':
         net = ResNet
         net_kwargs = {
             'depth': 32,
-            'num_classes': args.num_classes
+            'num_classes': 10
         }
         dataset = torchvision.datasets.CIFAR10
         transforms_train = TRANSFORM_CIFAR10_TRAIN
@@ -66,15 +68,5 @@ def main(args):
     DEVICE_LIST = ['cuda:' + str(i) for i in range(4)]
 
     # run federated
-    fl = FederatedServer(net, trainset, testset, net_kwargs=net_kwargs, devices=DEVICE_LIST, split_method=args.split_method, clients_num=args.num_workers)
-    fl.run(rounds=args.num_rounds)
-
-if __name__ == "__main__":
-    args = parser.parse_args()
-    SERVER_SETTINGS = {
-        'warm_up': args.warm_up,
-        'setting': {
-            'batch_size': args.batch_size
-        }
-    }
-    main(args)
+    fl = FederatedServer(net, trainset, testset, net_kwargs=net_kwargs, devices=DEVICE_LIST, split_method='iid', clients_num=3)
+    fl.run(rounds=2)
