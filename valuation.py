@@ -48,7 +48,6 @@ def leave_one_out(net, net_kwargs, dataset, weights, device):
     for key in result.keys():
         print("%d worker's LOO value: %.6f" % (key, result[key]))
 
-
 def shapley_value(net, net_kwargs, dataset, weights, devices):
     """
     Implement shapley value using multiprocessing
@@ -214,5 +213,32 @@ def _evaluate(net, loader, device):
             for p, q in zip(pred, labels):
                 predicted.append(p.item())
                 truth.append(q.item())
-                
+
     return accuracy_score(truth, predicted)
+
+
+def _utility(net, loader, device, alpha=0.5):
+    # evaluate cur_weight
+    predicted = []
+    truth = []
+
+    net = net.to(device)
+    net.eval()
+    loss_func = torch.nn.CrossEntropyLoss()
+    loss = 0.
+
+    with torch.no_grad():
+        for data in loader:
+            inputs, labels = data[0].to(device), data[1].to(device)
+            outputs = net(inputs)
+            # print(outputs.shape, labels.shape, outputs[0], labels[0])
+            _, pred = torch.max(outputs.data, 1)
+
+            loss += loss_func(outputs, labels)
+
+            for p, q in zip(pred, labels):
+                predicted.append(p.item())
+                truth.append(q.item())
+
+    error = 1. - accuracy_score(truth, predicted)
+    return loss * alpha + error * (1. - alpha)

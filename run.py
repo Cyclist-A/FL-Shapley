@@ -9,26 +9,6 @@ from net import MyNet
 from models.resnet import ResNet
 from federated import FederatedServer
 
-import argparse
-
-parser = argparse.ArgumentParser(description='Federated Learning Framework')
-parser.add_argument('--batch-size', type=int, default=64, metavar='N',
-                    help='input batch size for training (default: 64)')
-parser.add_argument('--dataset', type=str, default='cifar-10', metavar='N',
-                    help='set up different datasets')
-parser.add_argument('--num-classes', type=int, default=10, metavar='N',
-                    help='output dimension size(default: 10)')
-parser.add_argument('--warm-up', action='store_true', default=False,
-                    help='enable warm up')
-parser.add_argument('--split-method', type=str, default='iid', metavar='N',
-                    help='split the dataset with different assumptions')
-parser.add_argument('--num-workers', type=int, default=3, metavar='N',
-                    help='the number of workers in FL(default: 3)')
-parser.add_argument('--num-rounds', type=int, default=1, metavar='N',
-                    help='the rounds of aggregation(default: 1)')
-
-
-
 # transformations
 TRAINSFORM_MINST = transforms.Compose([
     transforms.ToTensor(),

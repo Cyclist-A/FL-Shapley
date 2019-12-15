@@ -59,9 +59,9 @@ class FederatedServer:
 
         # construct clients info
         self.client_settings = {
-            'epoch': 3,
+            'epoch': 2,
             'lr': 0.01,
-            'batch_size': 128,
+            'batch_size': 64,
             'loss_func': nn.CrossEntropyLoss,
             'optimizer': optim.Adam
         }
@@ -95,7 +95,7 @@ class FederatedServer:
 
             # valuation
             shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
-            leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
+            # leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
 
             # update params in server
             self._step(params)
