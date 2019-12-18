@@ -23,7 +23,7 @@ class Server:
             net: a pyTorch neural network that used by clients and server
             channels_in: a list of Queues connected to clients, used to send weights to clients
             channels_out: a list of Queues connected to clients, used to receive weights from clients
-            testset: test the preformance of aggregation weights
+            testset: test the performance of aggregation weights
             trainset: server's trainset, used as warm up (optional)
             device: the device name used to warm up and evaluate net
     """
@@ -69,7 +69,7 @@ class Server:
             # get the response from chosen clients
             params = self._params_from_client(client_ids)
 
-            # calcualte shapley value
+            # calculate shapley value
             self._shapley_value_sampling(params)
             # self._leave_one_out(params)
 
