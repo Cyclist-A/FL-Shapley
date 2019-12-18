@@ -1,3 +1,4 @@
+import time
 import math
 import copy
 import numpy as np
@@ -54,9 +55,9 @@ class FederatedServer:
         self.std = 0.5
 
         if net_kwargs:
-            self.current_params = net(**self.net_kwargs).state_dict()
+            self.current_params = net(**self.net_kwargs).to(torch.float64).state_dict()
         else:
-            self.current_params = net().state_dict()
+            self.current_params = net().to(torch.float64).state_dict()
 
         # fix random state (BUG cannot reproduce)
         np.random.seed(random_state)
@@ -73,7 +74,10 @@ class FederatedServer:
             'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
             'optimizer': optim.Adam,
-            'verbose': True
+            'verbose': True,
+            'enable_scheduler': False,
+            'scheduler': optim.lr_scheduler.ReduceLROnPlateau,
+            'scheduler_settings': {}
         }
 
         if client_settings:
@@ -97,7 +101,9 @@ class FederatedServer:
         RETURN:
             None
         """
+        print('Start training clients...')
         for r in range(rounds):
+            start_time = time.time()
             # choose clients
             clients_idx = self._choose_clients(c)
 
@@ -114,8 +120,10 @@ class FederatedServer:
             self._step(params)
             
             # evaluate
-            test_accu = self._evaluate()
-            print(f"Rounds[{r+1}/{rounds}]: Test Accu: {test_accu}")
+            test_accu, loss = self._evaluate()
+
+            elapse = time.time() - start_time
+            print(f"Rounds[{r+1}/{rounds}]: Loss: {loss} | Test Accu: {test_accu} | Time Elapse: {elapse}")
             print('-' * 20)
 
     def _warm_up(self, settings):
@@ -133,7 +141,7 @@ class FederatedServer:
             'lr': 0.01,
             'batch_size': 128,
             'loss_func': nn.CrossEntropyLoss,
-            'optimizer': optim.Adam,
+            'optimizer': optim.Adam
         }
 
         # grab settings from
@@ -165,7 +173,7 @@ class FederatedServer:
             epoch_loss = 0
 
             for i, data in enumerate(loader, 1):
-                inputs, labels = data[0].to(device), data[1].to(device)
+                inputs, labels = data[0].to(torch.float64).to(device), data[1].to(device)
                 outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
@@ -177,7 +185,7 @@ class FederatedServer:
                 epoch_loss += loss.item()
             
             # evaluate
-            test_accu = self._evaluate()
+            test_accu, _ = self._evaluate()
             print(f'Epoch[{epoch+1}/{default_setting["epoch"]}] Loss: {epoch_loss/i} | Test accu: {test_accu}')
         
         # store the training result
@@ -228,7 +236,6 @@ class FederatedServer:
         channel = [(mp.Queue(), channel_out) for _ in distri]
 
         # start training locally
-        print('Starting client processes...')
         clients_pro = [mp.Process(target=client.run, args=(distri[i],
                                                            self.net,
                                                            self.net_kwargs,
@@ -300,28 +307,33 @@ class FederatedServer:
         ARGS:
             None
         RETURN:
-            accuracy_score: evalutaion result
+            accuracy_score: evaluation result
+            loss: evaluation result
         """
         # initialize
         device = self.devices[-1]
         if self.net_kwargs:
-            net = self.net(**self.net_kwargs).to(device)
+            net = self.net(**self.net_kwargs).to(torch.float64).to(device)
         else:
-            net = self.net().to(device)
+            net = self.net().to(torch.float64).to(device)
         net.load_state_dict(self.current_params)
-        loader = utils.DataLoader(self.testset, batch_size=2000, shuffle=False, num_workers=5)
+        loader = utils.DataLoader(self.testset, batch_size=2000, shuffle=False, num_workers=10)
+        criterion = nn.CrossEntropyLoss()
+        
         predicted = []
         truth = []
+        loss = 0
 
         net.eval()
         with torch.no_grad():
-            for data in loader:
-                inputs, labels = data[0].to(device), data[1].to(device)
+            for i, data in enumerate(loader, 1):
+                inputs, labels = data[0].to(torch.float64).to(device), data[1].to(device)
                 outputs = net(inputs)
+                loss += criterion(outputs, labels).item()
                 _, pred = torch.max(outputs.data, 1)
 
                 for p, q in zip(pred, labels):
                     predicted.append(p.item())
                     truth.append(q.item())
 
-        return accuracy_score(truth, predicted)
+        return accuracy_score(truth, predicted), loss / i
