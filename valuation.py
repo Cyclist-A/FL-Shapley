@@ -134,47 +134,6 @@ def _shapley_value(net, net_kwargs, dataset, weights, permutations, samples, dev
 
     channel_out.put(res)
 
-
-# def _shapley_value_sampling(self, weights):
-#     """
-#     Calculate Shapley Values for clients
-
-#     ARGS:
-#         weights: weights uploaded from clients
-#     RETURN:
-#         result(dict): Client weights' shapley value
-#     """
-#     result = defaultdict(float)
-#     N = len(weights)
-#     w_ids = list(weights.keys())
-#     if N < 5:
-#         samples = math.factorial(N)
-#         for p in tqdm(itertools.permutations(w_ids, N), total=samples):
-#             sv_pre = 0.0
-#             for cur in range(N):
-#                 sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur + 1]]))
-#                 result[p[cur]] += (sv_cur - sv_pre) / samples
-#                 sv_pre = sv_cur
-#     else:
-#         # calculate sample times
-#         samples = int(math.sqrt(math.factorial(N))) * 10 if N < 10 else 1000
-#         print("Samples %d of %d" % (samples, math.factorial(N)))
-#         # for p in itertools.permutations(w_ids, N):
-#         for r in tqdm(range(samples), desc='Calculating SV...'):
-#             p = np.random.permutation(w_ids)
-#             # print("sampling: ", p)
-#             sv_pre = 0.0
-#             for cur in range(N):
-#                 sv_cur = self._evaluate(self._aggregate([weights[wk_id] for wk_id in p[:cur+1]]))
-#                 # print("cur SV: ", sv_cur)
-#                 result[p[cur]] += (sv_cur - sv_pre) / samples
-#                 # print("%d worker's sv %.6f" % (p[cur], result[p[cur]]))
-#                 sv_pre = sv_cur
-#     for key in result.keys():
-#         # result[key] /= samples
-#         print("%d worker's shapley value: %.6f" % (key, result[key]))
-
-
 def _aggregate(weights):
     """
     Aggregate weights(after scaling) from different NN

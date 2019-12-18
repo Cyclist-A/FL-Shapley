@@ -46,9 +46,9 @@ def run(clients, client_net, net_kwargs, params, device, channel, settings):
     """
     # initialize before training
     if net_kwargs:
-        net = client_net(**net_kwargs).to(device)
+        net = client_net(**net_kwargs).to(torch.float64).to(device)
     else:
-        net = client_net().to(device)
+        net = client_net().to(torch.float64).to(device)
 
     # run for each client
     for idx in clients:
@@ -57,13 +57,16 @@ def run(clients, client_net, net_kwargs, params, device, channel, settings):
         criterion = settings['loss_func']()
         optimizer = settings['optimizer'](net.parameters(), lr=settings['lr'])
 
+        if settings['enable_scheduler']:
+            scheduler = settings['scheduler'](optimizer, **settings['scheduler_settings'])
+
         # start training
         for epoch in range(settings['epoch']):
             net.train()
             epoch_loss = 0
 
             for i, data in enumerate(loader, 1):
-                inputs, labels = data[0].to(device), data[1].to(device)
+                inputs, labels = data[0].to(torch.float64).to(device), data[1].to(device)
                 outputs = net(inputs)
                 loss = criterion(outputs, labels)
 
@@ -74,6 +77,10 @@ def run(clients, client_net, net_kwargs, params, device, channel, settings):
 
                 epoch_loss += loss.item()
             
+            # scheduler
+            if settings['enable_scheduler']:
+                scheduler.step(epoch_loss)
+
             # evaluate
             train_accu = _evaluate(net, clients[idx], device)
             if settings['verbose']:
@@ -112,7 +119,7 @@ def _evaluate(net, dataset, device):
     net.eval()
     with torch.no_grad():
         for data in loader:
-            inputs, labels = data[0].to(device), data[1].to(device)
+            inputs, labels = data[0].to(torch.float64).to(device), data[1].to(device)
             outputs = net(inputs)
             _, pred = torch.max(outputs.data, 1)
 
