@@ -25,7 +25,7 @@ def leave_one_out(net, net_kwargs, dataset, weights, device):
         dataset: evaluation dataset
         weights: weights uploaded from clients
     RETURN:
-        result(dict): Each client's weight's LOO evaluation value
+        result(dict): Each client weight's LOO evaluation value
     """
     w_ids = weights.keys()
     result = defaultdict(float)
@@ -47,6 +47,8 @@ def leave_one_out(net, net_kwargs, dataset, weights, device):
         result[w] = res
     for key in result.keys():
         print("%d worker's LOO value: %.6f" % (key, result[key]))
+    
+    return result
 
 def shapley_value(net, net_kwargs, dataset, weights, devices):
     """
@@ -57,6 +59,8 @@ def shapley_value(net, net_kwargs, dataset, weights, devices):
         dataset: dataset for evaluation
         weights: weights of all chosen clients
         devices: available devices list
+    RETURN:
+        result(dict): Each client weight's SV evaluation value
     """
     # initialize
     N = len(weights)
@@ -97,6 +101,7 @@ def shapley_value(net, net_kwargs, dataset, weights, devices):
     for k in sorted(list(sv.keys())):
         print(f"Client {k}'s SV is: {sv[k]}")
 
+    return sv
 
 def _shapley_value(net, net_kwargs, dataset, weights, permutations, samples, device, channel_out):
     """

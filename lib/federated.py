@@ -1,6 +1,8 @@
 import time
 import math
 import copy
+import json
+
 import numpy as np
 
 import torch
@@ -10,6 +12,7 @@ import torch.utils.data as utils
 import torch.multiprocessing as mp
 
 from sklearn.metrics import accuracy_score
+from collections import defaultdict
 
 import client
 from splitDataset import split_dataset
@@ -53,6 +56,10 @@ class FederatedServer:
         self.clients_num = clients_num
         self.random_response = random_response
         self.std = 0.5
+        self.result ={
+            'LOO': defaultdict(list),
+            'SV': defaultdict(list)
+        }
 
         if net_kwargs:
             self.current_params = net(**self.net_kwargs).to(torch.float64).state_dict()
@@ -102,6 +109,9 @@ class FederatedServer:
             None
         """
         print('Start training clients...')
+        if c != 1:
+            raise NotImplementedError('Results cannot be saved properly.')
+
         for r in range(rounds):
             start_time = time.time()
             # choose clients
@@ -112,9 +122,12 @@ class FederatedServer:
 
             # valuation
             if self.cal_sv:
-                shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
+                res = shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
+                self._save_round(res, 'SV')
+
             if self.cal_loo:
-                leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
+                loo = leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
+                self._save_round(res, 'LOO')
 
             # update params in server
             self._step(params)
@@ -125,6 +138,16 @@ class FederatedServer:
             elapse = time.time() - start_time
             print(f"Rounds[{r+1}/{rounds}]: Loss: {loss} | Test Accu: {test_accu} | Time Elapse: {elapse}")
             print('-' * 20)
+
+    def save_valuation(self):
+        """
+
+        ARGS:
+            None
+        RETURN:
+            None
+        """
+        filename = self.client_settings
 
     def _warm_up(self, settings):
         """
@@ -238,7 +261,6 @@ class FederatedServer:
         # start training locally
         clients_pro = [mp.Process(target=client.run, args=(distri[i],
                                                            self.net,
-                                                           self.net_kwargs,
                                                            copy.deepcopy(self.current_params),
                                                            self.devices[i], channel[i], self.client_settings))
                        for i in range(len(distri))]
@@ -274,6 +296,10 @@ class FederatedServer:
                 params[idx][layer] = torch.div(params[idx][layer], total / length[idx])
 
         return params
+
+    def _save_round(self, res, method):
+        for key in res:
+            self.result[method][key].append(res[key])
 
     def _step(self, params):
         """

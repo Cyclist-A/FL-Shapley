@@ -29,14 +29,13 @@ def random_response(params, std):
     return random_weight
 
 
-def run(clients, client_net, net_kwargs, params, device, channel, settings):
+def run(clients, client_net, params, device, channel, settings):
     """
     Train the model several epochs locally
 
     AGRS:
         clients: clients' datasets. They are assigned to train on this device
         client_net: NN used to train
-        net_kwargs: kargs for creating NN
         params: NN's parameters
         device: the torch device runs this NN
         channel: (channel_in, channel_out): communication channel and controller
@@ -45,10 +44,7 @@ def run(clients, client_net, net_kwargs, params, device, channel, settings):
         None
     """
     # initialize before training
-    if net_kwargs:
-        net = client_net(**net_kwargs).to(torch.float64).to(device)
-    else:
-        net = client_net().to(torch.float64).to(device)
+    net = client_net(**settings['net_kwargs']).to(torch.float64).to(device)
 
     # run for each client
     for idx in clients:

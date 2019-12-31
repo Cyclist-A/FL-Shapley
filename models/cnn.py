@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-class MyNet(nn.Module):
+class CNN(nn.Module):
     def __init__(self, neurons=128):
         super().__init__()
         self.conv_out = 245  # gain by error message
