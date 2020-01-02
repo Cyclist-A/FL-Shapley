@@ -15,6 +15,33 @@ import numpy as np
 from sklearn.metrics import accuracy_score
 
 
+def eval_each_client(net, net_kwargs, dataset, params, device):
+    """
+    Evaluate clients parameters on testset
+
+    ARGS:
+        net: trained NN
+        net_kwargs: kwargs for creating net
+        dataset: evaluation dataset
+        weights: weights uploaded from clients
+    RETURN:
+        result(dict): Each client weight's LOO evaluation value
+    """
+    print('Start evaluating parameters from clients...')
+    if net_kwargs:
+        net = net(**net_kwargs)
+    else:
+        net = net()
+
+    device = torch.device(device)
+    loader = utils.DataLoader(dataset, batch_size=2000, shuffle=False, pin_memory=True, num_workers=10)
+    res = {}
+    for k in params:
+        net.load_state_dict(params[k])
+        res[k] = _evaluate(net, loader, device)
+    
+    return res
+
 def leave_one_out(net, net_kwargs, dataset, weights, device):
     """
     Calculate Leave-One-Out(LOO) evaluation

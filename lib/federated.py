@@ -14,9 +14,9 @@ import torch.multiprocessing as mp
 from sklearn.metrics import accuracy_score
 from collections import defaultdict
 
-import client
-from splitDataset import split_dataset
-from valuation import shapley_value, leave_one_out
+import lib.client as client
+from lib.splitDataset import split_dataset
+from lib.valuation import shapley_value, leave_one_out, eval_each_client
 
 class FederatedServer:
     """
@@ -33,6 +33,7 @@ class FederatedServer:
         devices: a list of available devices
         cal_sv: whether to calculate Shapley Value
         cal_loo: whether to calculate LOO
+        eval_clients: whether to evaluate each client's params
         clients_num: # clients to create
         split_method: the method to split the dataset. 'iid', 'imba-label', 'imba-size'
         imbalanced_rate: imbalance strength, only works when split method is imba-label
@@ -43,7 +44,7 @@ class FederatedServer:
         std: .Only works when random response is true
         random_state: set the seed to split dataset
     """
-    def __init__(self, net, trainset, testset, net_kwargs=None, client_settings=None, devices=['cpu'], cal_sv = True, cal_loo = True,
+    def __init__(self, net, trainset, testset, net_kwargs=None, client_settings=None, devices=['cpu'], cal_sv = True, cal_loo = True, eval_clients=False,
         clients_num=3, split_method='iid', imbalanced_rate=0.8, capacity=[0.1, 0.3, 0.6], warm_up=False, warm_setting=None, random_response=False, std=0.5, random_state=100):
         # initialize
         self.net = net
@@ -53,13 +54,11 @@ class FederatedServer:
         self.devices = [torch.device(d) for d in devices]
         self.cal_sv = cal_sv
         self.cal_loo = cal_loo
+        self.eval_clients = eval_clients
         self.clients_num = clients_num
         self.random_response = random_response
         self.std = 0.5
-        self.result ={
-            'LOO': defaultdict(list),
-            'SV': defaultdict(list)
-        }
+        self.result = defaultdict(dict)
 
         if net_kwargs:
             self.current_params = net(**self.net_kwargs).to(torch.float64).state_dict()
@@ -67,18 +66,22 @@ class FederatedServer:
             self.current_params = net().to(torch.float64).state_dict()
 
         # fix random state (BUG cannot reproduce)
-        np.random.seed(random_state)
-        torch.manual_seed(random_state)
-        torch.cuda.manual_seed_all(random_state)
+        # np.random.seed(random_state)
+        # torch.manual_seed(random_state)
+        # torch.cuda.manual_seed_all(random_state)
 
         # split dataset for different clients
         self.clients = split_dataset(trainset, self.clients_num, split_method, imbalanced_rate, capacity)
 
         # construct clients info
         self.client_settings = {
-            'epoch': 3,
+            'mode': 'epoch',
+            'epoch': 30,
+            'thres': 0.8,
+            'max_epoch': 10000,
             'lr': 0.01,
             'batch_size': 128,
+            'eval_each_iter': False,
             'loss_func': nn.CrossEntropyLoss,
             'optimizer': optim.Adam,
             'verbose': True,
@@ -92,7 +95,7 @@ class FederatedServer:
                 if k in self.client_settings:
                     self.client_settings[k] = client_settings[k]
                 else:
-                    raise RuntimeError('Wrong settings for client, no such settings')
+                    raise ValueError(f'Wrong settings for client, no such settings. Got {k}')
 
         # warm up the server
         if warm_up:
@@ -109,25 +112,27 @@ class FederatedServer:
             None
         """
         print('Start training clients...')
-        if c != 1:
-            raise NotImplementedError('Results cannot be saved properly.')
-
         for r in range(rounds):
             start_time = time.time()
             # choose clients
             clients_idx = self._choose_clients(c)
 
             # train on clients
-            params = self._train_clients(clients_idx)
+            params, total_iter = self._train_clients(clients_idx)
+            self._save_round(total_iter, 'iter', r+1)
 
             # valuation
+            if self.eval_clients:
+                res = eval_each_client(self.net, self.net_kwargs, self.testset, params, self.devices[0])
+                self._save_round(res, 'eval', r+1)
+
             if self.cal_sv:
-                res = shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
-                self._save_round(res, 'SV')
+                sv = shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
+                self._save_round(sv, 'SV', r+1)
 
             if self.cal_loo:
                 loo = leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
-                self._save_round(res, 'LOO')
+                self._save_round(loo, 'LOO', r+1)
 
             # update params in server
             self._step(params)
@@ -139,15 +144,25 @@ class FederatedServer:
             print(f"Rounds[{r+1}/{rounds}]: Loss: {loss} | Test Accu: {test_accu} | Time Elapse: {elapse}")
             print('-' * 20)
 
-    def save_valuation(self):
+    def save_valuation(self, prefix=''):
         """
+        Save the evaluation results to file
 
         ARGS:
             None
         RETURN:
             None
         """
-        filename = self.client_settings
+        path = './result./'
+        if self.client_settings['mode'] == 'epoch':
+            filename = path + prefix + f'fixed_{self.client_settings["epoch"]}_epochs.json'
+        else:
+            filename = path + prefix + f'{self.client_settings["thres"]}_threshold.json'
+        
+        with open(filename, 'w') as f:
+            f.write(json.dumps(dict(self.result)))
+        
+        print(f'Successfully saved results in {filename}')
 
     def _warm_up(self, settings):
         """
@@ -248,6 +263,7 @@ class FederatedServer:
             clients_idx: chosen clients id
         RETURN:
             params(dict): client_id: params; parameters from each client's training result
+            total_iter(dict): client_id: total iteration; the number of client training iteration
         """
         # distribute missions
         distri = [{} for i in range(min(len(self.devices), len(clients_idx)))]
@@ -261,6 +277,7 @@ class FederatedServer:
         # start training locally
         clients_pro = [mp.Process(target=client.run, args=(distri[i],
                                                            self.net,
+                                                           self.net_kwargs,
                                                            copy.deepcopy(self.current_params),
                                                            self.devices[i], channel[i], self.client_settings))
                        for i in range(len(distri))]
@@ -270,10 +287,12 @@ class FederatedServer:
         # collect results from clients pro
         params = {}
         length = {}
+        total_iter = {}
         while len(params) < len(clients_idx):
             message = channel_out.get()
             params[message['id']] = message['params']
             length[message['id']] = message['length']
+            total_iter[message['id']] = message['iter']
 
         # get all params, kill the clients
         for c in channel:
@@ -288,6 +307,8 @@ class FederatedServer:
             params['random'] = client.random_response(copy.deepcopy(self.current_params), self.std)
             # use ave length as random's length
             length['random'] = sum(length.values()) / len(clients_idx)
+            # set iter to -1
+            total_iter['random'] = -1
 
         # scale the params
         total = sum(length.values())
@@ -295,11 +316,13 @@ class FederatedServer:
             for layer in params[idx]:
                 params[idx][layer] = torch.div(params[idx][layer], total / length[idx])
 
-        return params
+        return params, total_iter
 
-    def _save_round(self, res, method):
-        for key in res:
-            self.result[method][key].append(res[key])
+    def _save_round(self, res, name, cur_round):
+        for client_id in res:
+            if cur_round not in self.result[client_id]:
+                self.result[client_id][cur_round] = {}
+            self.result[client_id][cur_round][name] = res[client_id]
 
     def _step(self, params):
         """
@@ -339,9 +362,10 @@ class FederatedServer:
         # initialize
         device = self.devices[-1]
         if self.net_kwargs:
-            net = self.net(**self.net_kwargs).to(torch.float64).to(device)
+            net = self.net(**self.net_kwargs).to(device, torch.float64)
         else:
-            net = self.net().to(torch.float64).to(device)
+            net = self.net().to(device, torch.float64)
+        
         net.load_state_dict(self.current_params)
         loader = utils.DataLoader(self.testset, batch_size=2000, shuffle=False, num_workers=10)
         criterion = nn.CrossEntropyLoss()

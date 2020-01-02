@@ -1,14 +1,15 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 class CNN(nn.Module):
     def __init__(self, neurons=128):
         super().__init__()
-        self.conv_out = 245  # gain by error message
+        self.conv_out = 208  # gain by error message
 
         self.conv1 = nn.Conv2d(1, 5, 5)
-        self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2)
-        self.conv2 = nn.Conv2d(5, 5, 5)
+        self.max_pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.conv2 = nn.Conv2d(5, 13, 5)
 
         self.bn0 = nn.BatchNorm1d(self.conv_out)
         self.drop_fc0 = nn.Dropout(0.3)
@@ -21,22 +22,26 @@ class CNN(nn.Module):
         self.fc2 = nn.Linear(neurons, 10)
 
         # initialize layers
-        self._init_parameters()
+        # self._init_parameters()
 
     def _init_parameters(self):
         for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.kaiming_uniform_(m.weight)
-            elif isinstance(m, nn.BatchNorm1d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.weight, 0)
+#             if isinstance(m, nn.Linear):
+#                 nn.init.kaiming_normal_(m.weight, a=0.3)
+            if isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.weight, 0.0)
             elif isinstance(m, nn.Conv2d):
                 nn.init.normal_(m.weight, mean=0.0, std=0.5)
 
     def forward(self, x):
         x = self.conv1(x)
         x = self.max_pool(x)
+        x = self.non_liner(x)
+        
         x = self.conv2(x)
+        x = self.max_pool(x)
+        x = self.non_liner(x)
 
         x = torch.flatten(x, start_dim=1)
         
