@@ -23,7 +23,7 @@ def eval_each_client(net, net_kwargs, dataset, params, device):
         net: trained NN
         net_kwargs: kwargs for creating net
         dataset: evaluation dataset
-        weights: weights uploaded from clients
+        params: params uploaded from clients
     RETURN:
         result(dict): Each client weight's LOO evaluation value
     """
@@ -42,7 +42,7 @@ def eval_each_client(net, net_kwargs, dataset, params, device):
     
     return res
 
-def leave_one_out(net, net_kwargs, dataset, weights, device):
+def leave_one_out(net, net_kwargs, dataset, params, scale, device):
     """
     Calculate Leave-One-Out(LOO) evaluation
 
@@ -50,11 +50,13 @@ def leave_one_out(net, net_kwargs, dataset, weights, device):
         net: trained NN
         net_kwargs: kwargs for creating net
         dataset: evaluation dataset
-        weights: weights uploaded from clients
+        params: params uploaded from clients
+        scale: the scale value for each client's params
     RETURN:
         result(dict): Each client weight's LOO evaluation value
     """
-    w_ids = weights.keys()
+    print('Start calculating LOO values...')
+    client_ids = params.keys()
     result = defaultdict(float)
     
     if net_kwargs:
@@ -62,36 +64,38 @@ def leave_one_out(net, net_kwargs, dataset, weights, device):
     else:
         net = net()
 
-    net.load_state_dict(_aggregate(weights))
+    net.load_state_dict(_aggregate(params, scale))
     loader = utils.DataLoader(dataset, batch_size=5000, shuffle=False, pin_memory=True)
     global_result = _evaluate(net, loader, device)
 
-    for w in w_ids:
-        print("evaluating %d weight's LOO value..." % w)
-        cur_weight = _aggregate([weights[wk_id] for wk_id in w_ids if wk_id != w])
-        net.load_state_dict(cur_weight)
+    for c in client_ids:
+        cur_params = _aggregate({idx: params[idx] for idx in client_ids if idx != c}, scale)
+        net.load_state_dict(cur_params)
         res = global_result - _evaluate(net, loader, device)
-        result[w] = res
+        result[c] = res
+    
+    # print results
     for key in result.keys():
         print("%d worker's LOO value: %.6f" % (key, result[key]))
     
     return result
 
-def shapley_value(net, net_kwargs, dataset, weights, devices):
+def shapley_value(net, net_kwargs, dataset, params, scale, devices):
     """
     Implement shapley value using multiprocessing
     ARGS:
         net: net for evaluation
         net_kwargs: kwargs for creating net
         dataset: dataset for evaluation
-        weights: weights of all chosen clients
+        params: params of all chosen clients
+        scale: the scale value for each client's params
         devices: available devices list
     RETURN:
         result(dict): Each client weight's SV evaluation value
     """
     # initialize
-    N = len(weights)
-    w_ids = list(weights.keys())
+    N = len(params)
+    w_ids = list(params.keys())
     print("Start to calculate shapley values...")
 
     # assign tasks and samples
@@ -108,7 +112,7 @@ def shapley_value(net, net_kwargs, dataset, weights, devices):
     # assign evaluation task to every device
     channel_out = mp.Queue()
     evaluation_pro = [mp.Process(target=_shapley_value,
-                                 args=(net, net_kwargs, dataset, weights, tasks[i], samples, devices[i], channel_out))
+                                 args=(net, net_kwargs, dataset, params, scale, tasks[i], samples, devices[i], channel_out))
                       for i in range(len(tasks))]
     
     for p in evaluation_pro:
@@ -130,15 +134,16 @@ def shapley_value(net, net_kwargs, dataset, weights, devices):
 
     return sv
 
-def _shapley_value(net, net_kwargs, dataset, weights, permutations, samples, device, channel_out):
+def _shapley_value(net, net_kwargs, dataset, params, scale, permutations, samples, device, channel_out):
     """
-    Evaluate multi differernt weights of a NN
+    Evaluate multi differernt params of a NN
 
     ARGS:
         net: training NN
         net_kwargs: kwargs for creating net
         dataset: evaluation dataset
-        weights: weight dict from chosn clients
+        params: params dict from chosn clients
+        scale: the scale value for each client's params
         permutation: the permutation assgined to calculate SV
         samples: total sample times
         device: torch device to run NN
@@ -156,35 +161,45 @@ def _shapley_value(net, net_kwargs, dataset, weights, permutations, samples, dev
 
     # modified from original SV calculation
     for p in permutations:
-        sv_pre = 0.0
-        for cur in range(len(weights)):
-            weight_cur = _aggregate([weights[wk_id] for wk_id in p[:cur + 1]])
-            net.load_state_dict(weight_cur)
-            sv_cur = _evaluate(net, loader, device)
-            res[p[cur]] += (sv_cur - sv_pre) / samples
-            sv_pre = sv_cur
+        pre_sv = 0.0
+        for cur in range(len(params)):
+            cur_params = _aggregate({idx: params[idx] for idx in p[:cur + 1]}, scale)
+            net.load_state_dict(cur_params)
+            cur_sv = _evaluate(net, loader, device)
+            res[p[cur]] += (cur_sv - pre_sv) / samples
+            pre_sv = cur_sv
 
     channel_out.put(res)
 
-def _aggregate(weights):
+def _aggregate(params, scale):
     """
-    Aggregate weights(after scaling) from different NN
+    Aggregate params from different NN
 
     ARGS:
-        weights:  a list contains workers' weights
+        params: a list contains workers' weights
+        scale: the scale value for each client's params
     RETURN:
         aggr_params(dict): a aggregated weights
     """
-    if not weights:
+    if not params:
         return {}
 
-    aggr_p = copy.deepcopy(weights[0])
+    clients = list(params.keys())
+    # calcualte new scale by clients
+    total = 0
+    for c in clients:
+        total += scale[c]
+    new_scale = {c:scale[c] / total for c in clients}
+    
+    aggr_params = {}
+    layers = params[clients[0]].keys()
 
-    for k in weights[0].keys():
-        for i in range(1, len(weights)):
-            aggr_p[k] += weights[i][k]
+    for l in layers:
+        aggr_params[l] = params[clients[0]][l].clone().detach() * new_scale[clients[0]]
+        for i in clients[1:]:
+            aggr_params[l] += params[i][l] * new_scale[i]
 
-    return aggr_p
+    return aggr_params
 
 
 def _evaluate(net, loader, device):

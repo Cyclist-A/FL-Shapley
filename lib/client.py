@@ -123,12 +123,18 @@ def run(clients, client_net, net_kwargs, params, device, channel, settings):
 
             # evaluate
             train_accu = _evaluate(net, test_loader, device)
+            if settings['mode'] == 'thres' and train_accu >= settings['thres']:
+                break
+            
             if settings['verbose']:
-                print(f'Client {idx}: Epoch[{epoch + 1}/{settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
+                if settings['mode'] == 'thres':
+                    print(f'Client {idx}: Epoch[{epoch + 1}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
+                else:
+                    print(f'Client {idx}: Epoch[{epoch + 1}/{settings["epoch"]}] Loss: {epoch_loss/i} | Train accu: {train_accu}')
                 sys.stdout.flush()
         
         # finished, send params back to server
-        trained_params = net.state_dict()
+        trained_params = net.state_dict()   
         message = {
             'id': idx,
             'params': {layer: trained_params[layer].clone().detach().cpu() for layer in trained_params},

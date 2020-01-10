@@ -118,7 +118,7 @@ class FederatedServer:
             clients_idx = self._choose_clients(c)
 
             # train on clients
-            params, total_iter = self._train_clients(clients_idx)
+            params, scale, total_iter = self._train_clients(clients_idx)
             self._save_round(total_iter, 'iter', r+1)
 
             # valuation
@@ -127,15 +127,15 @@ class FederatedServer:
                 self._save_round(res, 'eval', r+1)
 
             if self.cal_sv:
-                sv = shapley_value(self.net, self.net_kwargs, self.testset, params, self.devices)
+                sv = shapley_value(self.net, self.net_kwargs, self.testset, params, scale, self.devices)
                 self._save_round(sv, 'SV', r+1)
 
             if self.cal_loo:
-                loo = leave_one_out(self.net, self.net_kwargs, self.testset, params, self.devices[0])
+                loo = leave_one_out(self.net, self.net_kwargs, self.testset, params, scale, self.devices[0])
                 self._save_round(loo, 'LOO', r+1)
 
             # update params in server
-            self._step(params)
+            self._step(params, scale)
             
             # evaluate
             test_accu, loss = self._evaluate()
@@ -153,7 +153,7 @@ class FederatedServer:
         RETURN:
             None
         """
-        path = './result./'
+        path = './result/'
         if self.client_settings['mode'] == 'epoch':
             filename = path + prefix + f'fixed_{self.client_settings["epoch"]}_epochs.json'
         else:
@@ -263,6 +263,7 @@ class FederatedServer:
             clients_idx: chosen clients id
         RETURN:
             params(dict): client_id: params; parameters from each client's training result
+            scale(dict): the scale value for each client's params, depend on dataset's length
             total_iter(dict): client_id: total iteration; the number of client training iteration
         """
         # distribute missions
@@ -304,19 +305,22 @@ class FederatedServer:
 
          # add random response in every round
         if self.random_response:
-            params['random'] = client.random_response(copy.deepcopy(self.current_params), self.std)
+            params[self.clients_num] = client.random_response(copy.deepcopy(self.current_params), self.std)
             # use ave length as random's length
-            length['random'] = sum(length.values()) / len(clients_idx)
+            length[self.clients_num] = sum(length.values()) / len(clients_idx)
             # set iter to -1
-            total_iter['random'] = -1
+            total_iter[self.clients_num] = -1
 
-        # scale the params
+        # calculate the scales of params
+        scale = {}
         total = sum(length.values())
         for idx in params:
-            for layer in params[idx]:
-                params[idx][layer] = torch.div(params[idx][layer], total / length[idx])
+            scale[idx] = length[idx] / total
+        # for idx in params:
+        #     for layer in params[idx]:
+        #         params[idx][layer] = torch.div(params[idx][layer], total / length[idx])
 
-        return params, total_iter
+        return params, scale, total_iter
 
     def _save_round(self, res, name, cur_round):
         for client_id in res:
@@ -324,14 +328,14 @@ class FederatedServer:
                 self.result[client_id][cur_round] = {}
             self.result[client_id][cur_round][name] = res[client_id]
 
-    def _step(self, params):
+    def _step(self, params, scale):
         """
         Aggregate delta parameters from different clients.
         Use aggregation resutls to update the model
 
         ARGS:
             params: all parameters from clients
-            length: client datasets' lenght
+            scale: the scale value for each client's params
         RETURN:
             None
         """
@@ -342,9 +346,9 @@ class FederatedServer:
         aggr_params = {}
 
         for l in layers:
-            aggr_params[l] = params[idx[0]][l].clone().detach()
+            aggr_params[l] = params[idx[0]][l].clone().detach() * scale[idx[0]]
             for i in idx[1:]:
-                aggr_params[l] += params[i][l]
+                aggr_params[l] += params[i][l] * scale[i]
 
         # update net's params
         self.current_params = aggr_params
